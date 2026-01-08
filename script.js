@@ -31,7 +31,7 @@ async function scanLink() {
         button.disabled = false;
         button.innerText = "Check Trust";
 
-        if (data.verdict === "✅ ONLINE") {
+        if (data.verdict.includes("SAFE")) {
             resultBox.className = "safe";
             resultBox.innerHTML = `
                 <strong>${data.verdict}</strong><br>
