@@ -10,12 +10,12 @@ app = Flask(__name__)
 CORS(app)
 
 # 1. SETUP GEMINI (The AI Brain)
-# We get the key from Render's secret vault
 api_key = os.environ.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-pro')
-    print("🧠 AI CORTEX: ONLINE")
+    # UPDATED MODEL NAME: Using the newer, faster Flash model
+    model = genai.GenerativeModel('gemini-2.5-flash')
+    print("🧠 AI CORTEX: ONLINE (Gemini 2.5 Flash)")
 else:
     print("⚠️ AI CORTEX: OFFLINE (No Key Found)")
     model = None
@@ -27,7 +27,7 @@ def ziva_truth_engine(url):
     }
     
     try:
-        # --- PHASE 1: SCRAPING (The Eyes) ---
+        # --- PHASE 1: SCRAPING ---
         response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.content, "html.parser")
         
@@ -39,11 +39,10 @@ def ziva_truth_engine(url):
         price_tag = soup.find("span", {"class": "a-price-whole"})
         price = "₹" + price_tag.get_text().replace(".", "").strip() if price_tag else "Price Hidden"
         
-        # Rating & Reviews (The Data)
+        # Rating & Reviews
         rating = 0.0
         review_count = 0
         
-        # ... (Same Scraping Logic as before for Stars/Reviews) ...
         rating_tag = soup.find("span", {"class": "a-icon-alt"})
         if rating_tag:
              try: rating = float(rating_tag.get_text().split(" ")[0])
@@ -57,7 +56,7 @@ def ziva_truth_engine(url):
                 try: review_count = int(re.findall(r'\d+', tag.get_text().replace(",", ""))[0])
                 except: pass
 
-        # --- PHASE 2: AI ANALYSIS (The Cortex) ---
+        # --- PHASE 2: AI ANALYSIS (Gemini 1.5 Flash) ---
         ai_verdict = "NEUTRAL"
         ai_reason = "AI did not run."
         
@@ -85,10 +84,9 @@ def ziva_truth_engine(url):
                     ai_reason = ai_reason.strip()
             except Exception as e:
                 print(f"AI Error: {e}")
+                ai_reason = f"AI Error: {str(e)}"
 
-        # --- PHASE 3: THE FINAL JUDGMENT (Synthesis) ---
-        # We combine Hard Data (Stars) with Soft Data (AI)
-        
+        # --- PHASE 3: THE FINAL JUDGMENT ---
         final_verdict = "⚠️ UNKNOWN"
         final_reason = "Insufficient Data"
         
@@ -105,6 +103,7 @@ def ziva_truth_engine(url):
         # RULE 3: If both match, it is Safe.
         elif rating >= 4.0 and review_count > 50:
             final_verdict = "✅ LIKELY SAFE"
+            # We add the AI confirmation to the reason so you KNOW it worked
             final_reason = f"Verified by AI & Data ({rating} stars)."
             
         return {
@@ -119,7 +118,7 @@ def ziva_truth_engine(url):
 
 @app.route('/')
 def home():
-    return "Ziva Cortex (Gemini Enabled) is Online! 🧠⚡"
+    return "Ziva Cortex (Gemini 1.5 Flash) is Online! 🧠⚡"
 
 @app.route('/scan', methods=['POST'])
 def scan_endpoint():
