@@ -14,8 +14,8 @@ api_key = os.environ.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
     # UPDATED MODEL NAME: Using the newer, faster Flash model
-    model = genai.GenerativeModel('gemini-3-flash')
-    print("🧠 AI CORTEX: ONLINE (Gemini 3 flash)")
+    model = genai.GenerativeModel('gemini-3-flash-preview')
+    print("🧠 AI CORTEX: ONLINE (Gemini 3 flash preview)")
 else:
     print("⚠️ AI CORTEX: OFFLINE (No Key Found)")
     model = None
