@@ -37,7 +37,7 @@ async function scanLink() {
                 <strong>${data.verdict}</strong><br>
                 <strong>Product:</strong> ${data.product}<br>
                 <strong>Price Found:</strong> ${data.price}<br>
-                <em>(Engine Analysis: Product is live and price is visible.)</em>
+                <em>${data.reason}</em> 
             `;
         } else {
             resultBox.className = "scam";
