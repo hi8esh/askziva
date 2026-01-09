@@ -5,17 +5,18 @@ from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
 import re
+from datetime import datetime  # <--- NEW: Give Ziva a watch
 
 app = Flask(__name__)
 CORS(app)
 
-# 1. SETUP GEMINI (The AI Brain)
+# 1. SETUP GEMINI
 api_key = os.environ.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
-    # UPDATED MODEL NAME: Using the newer, faster Flash model
-    model = genai.GenerativeModel('gemini-3-flash-preview')
-    print("🧠 AI CORTEX: ONLINE (Gemini 3 flash preview)")
+    # Sticking to the model you found works, but adding logic to fix the date issue
+    model = genai.GenerativeModel('models/gemini-3-flash-preview') 
+    print("🧠 AI CORTEX: ONLINE (Gemini 3 Flash)")
 else:
     print("⚠️ AI CORTEX: OFFLINE (No Key Found)")
     model = None
@@ -27,7 +28,7 @@ def ziva_truth_engine(url):
     }
     
     try:
-        # --- PHASE 1: SCRAPING ---
+        # --- PHASE 1: DEEP SCRAPING ---
         response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.content, "html.parser")
         
@@ -39,15 +40,20 @@ def ziva_truth_engine(url):
         price_tag = soup.find("span", {"class": "a-price-whole"})
         price = "₹" + price_tag.get_text().replace(".", "").strip() if price_tag else "Price Hidden"
         
+        # Details (Bullets)
+        features = ""
+        feature_bullets = soup.find("div", {"id": "feature-bullets"})
+        if feature_bullets:
+            features = feature_bullets.get_text().strip()[:500]
+        
         # Rating & Reviews
         rating = 0.0
         review_count = 0
-        
         rating_tag = soup.find("span", {"class": "a-icon-alt"})
         if rating_tag:
              try: rating = float(rating_tag.get_text().split(" ")[0])
              except: pass
-             
+        
         review_selectors = [{"id": "acrCustomerReviewText"}, {"data-hook": "total-review-count"}, {"class": "a-size-base", "dir": "auto"}]
         for selector in review_selectors:
             if review_count > 0: break
@@ -56,25 +62,32 @@ def ziva_truth_engine(url):
                 try: review_count = int(re.findall(r'\d+', tag.get_text().replace(",", ""))[0])
                 except: pass
 
-        # --- PHASE 2: AI ANALYSIS (Gemini 1.5 Flash) ---
+        # --- PHASE 2: AI ANALYSIS (Time-Aware) ---
         ai_verdict = "NEUTRAL"
         ai_reason = "AI did not run."
         
         if model:
             try:
-                # We ask Gemini to judge the product title
+                # NEW: We tell the AI the current date so it knows the phone is old news
+                today_date = datetime.now().strftime("%B %Y")
+                
                 prompt = f"""
-                You are a fraud detection AI. Analyze this Amazon product title and price.
+                Act as Ziva, a fraud detection AI. 
+                TODAY'S DATE: {today_date} (Keep this in mind checking release dates).
+                
                 Product: "{title_text}"
                 Price: "{price}"
+                Review Count: {review_count}
+                Details: "{features}"
                 
-                Is this likely a scam, a fake product, or misleading? 
-                If it looks like a generic drop-shipped item with random keywords, say SUSPICIOUS.
-                If it looks like a legitimate brand product, say SAFE.
+                Task:
+                1. If the product has >100 reviews, assume it IS released and real, even if your training data is old.
+                2. Check for mismatched specs (e.g., "16TB SSD" for $20).
+                3. Check for "Keyword Stuffing".
                 
                 Respond in this format: VERDICT | REASON
-                Example: SAFE | Trusted Brand Name.
-                Example: SUSPICIOUS | Nonsense brand name and impossible specs.
+                Example: SAFE | Trusted Brand and significant review history.
+                Example: SUSPICIOUS | Price is too low for these specs.
                 """
                 response = model.generate_content(prompt)
                 text = response.text.strip()
@@ -86,25 +99,25 @@ def ziva_truth_engine(url):
                 print(f"AI Error: {e}")
                 ai_reason = f"AI Error: {str(e)}"
 
-        # --- PHASE 3: THE FINAL JUDGMENT ---
+        # --- PHASE 3: FINAL JUDGMENT ---
         final_verdict = "⚠️ UNKNOWN"
         final_reason = "Insufficient Data"
         
-        # RULE 1: If AI screams SCAM, we listen.
+        # Logic Fix: If reviews exist, we override the AI's "Unreleased" hallucination
         if "SUSPICIOUS" in ai_verdict.upper():
-            final_verdict = "❌ HIGH RISK (AI ALERT)"
-            final_reason = f"AI Detection: {ai_reason}"
-            
-        # RULE 2: If Data screams SCAM, we listen.
+            if "unreleased" in ai_reason.lower() and review_count > 500:
+                 final_verdict = "✅ LIKELY SAFE"
+                 final_reason = f"Released Product: {review_count} verified reviews override AI release date warning."
+            else:
+                final_verdict = "❌ HIGH RISK (AI ALERT)"
+                final_reason = f"Ziva Intelligence: {ai_reason}"
+                
         elif review_count < 10 and review_count >= 0:
             final_verdict = "❌ HIGH RISK"
             final_reason = "New Seller (Less than 10 reviews)."
-            
-        # RULE 3: If both match, it is Safe.
         elif rating >= 4.0 and review_count > 50:
             final_verdict = "✅ LIKELY SAFE"
-            # We add the AI confirmation to the reason so you KNOW it worked
-            final_reason = f"Verified by AI & Data ({rating} stars)."
+            final_reason = f"Verified: {rating} stars & AI Analysis."
             
         return {
             "verdict": final_verdict,
@@ -118,7 +131,7 @@ def ziva_truth_engine(url):
 
 @app.route('/')
 def home():
-    return "Ziva Cortex (Gemini 1.5 Flash) is Online! 🧠⚡"
+    return "Ziva Cortex (Time-Aware) is Online! 🧠🕰️"
 
 @app.route('/scan', methods=['POST'])
 def scan_endpoint():
