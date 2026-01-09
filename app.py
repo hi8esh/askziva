@@ -63,31 +63,30 @@ def ziva_truth_engine(url):
                 except: pass
 
         # --- PHASE 2: AI ANALYSIS (Time-Aware) ---
+        # --- PHASE 2: AI ANALYSIS (Focused Mode) ---
         ai_verdict = "NEUTRAL"
         ai_reason = "AI did not run."
         
         if model:
             try:
-                # NEW: We tell the AI the current date so it knows the phone is old news
-                today_date = datetime.now().strftime("%B %Y")
-                
+                # UPDATED PROMPT: We strictly forbid the AI from guessing release dates.
                 prompt = f"""
-                Act as Ziva, a fraud detection AI. 
-                TODAY'S DATE: {today_date} (Keep this in mind checking release dates).
+                Act as Ziva, a fraud detection AI.
                 
                 Product: "{title_text}"
                 Price: "{price}"
                 Review Count: {review_count}
                 Details: "{features}"
                 
-                Task:
-                1. If the product has >100 reviews, assume it IS released and real, even if your training data is old.
-                2. Check for mismatched specs (e.g., "16TB SSD" for $20).
-                3. Check for "Keyword Stuffing".
+                RULES:
+                1. TRUST THE REVIEW COUNT: If reviews > 100, the product is REAL and RELEASED. Do not claim it is "unreleased" or "rumored".
+                2. IGNORE your training data cutoff regarding release dates.
+                3. FOCUS ONLY ON SCAMS: Look for "16TB SSD for $20" or gibberish brand names.
+                4. If the specs look realistic for the price, verdict is SAFE.
                 
                 Respond in this format: VERDICT | REASON
-                Example: SAFE | Trusted Brand and significant review history.
-                Example: SUSPICIOUS | Price is too low for these specs.
+                Example: SAFE | Specs match price and high review count confirms authenticity.
+                Example: SUSPICIOUS | Generic brand name with impossible specs.
                 """
                 response = model.generate_content(prompt)
                 text = response.text.strip()
