@@ -58,8 +58,8 @@ model = None
 
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('models/gemma-3-27b-it') 
-    print("🧠 AI CORTEX: Connected (Gemma 3 27B)")
+    model = genai.GenerativeModel('models/gemini-1.5-flash-002')  # Same as extension
+    print("🧠 AI CORTEX: Connected (Gemini 1.5 Flash)")
 else:
     print("⚠️ AI CORTEX: OFFLINE (Missing GEMINI_API_KEY)")
 
@@ -68,7 +68,7 @@ def extract_product_title(url):
     """Extract product title and price from Amazon/Flipkart URL"""
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, "html.parser")
@@ -87,21 +87,28 @@ def extract_product_title(url):
                 except:
                     pass
             
-            return title_tag.get_text().strip(), current_price
+            full_title = title_tag.get_text().strip()
+            print(f"✅ Extracted: {full_title[:80]}... @ ₹{current_price}")
+            return full_title, current_price
         
         # Try Flipkart/Croma title
         title_tag = soup.find("h1")
         if title_tag:
-            return title_tag.get_text().strip(), current_price
+            full_title = title_tag.get_text().strip()
+            print(f"✅ Extracted: {full_title[:80]}...")
+            return full_title, current_price
         
         # Fallback: extract from URL
         if "amazon" in url.lower():
             title = url.split("/dp/")[0].split("/")[-1]
-            return (title.replace("-", " ") if title else "Unknown Product"), current_price
+            fallback_title = title.replace("-", " ") if title else "Unknown Product"
+            print(f"⚠️ Fallback URL-based title: {fallback_title}")
+            return fallback_title, current_price
         
+        print("⚠️ Could not extract title from page")
         return "Unknown Product", current_price
     except Exception as e:
-        print(f"⚠️ Title/Price extraction failed: {e}")
+        print(f"❌ Title/Price extraction failed: {e}")
         return "Unknown Product", 0
 
 
@@ -192,7 +199,7 @@ async def scan_endpoint(request_data: dict):
 async def run_ai_analysis(product_title: str):
     """AI Analysis Task"""
     default_response = {
-        "verdict": "UNKNOWN", "reason": "AI currently unavailable."
+        "verdict": "UNKNOWN", "score": 50, "reason": "AI currently unavailable."
     }
     if not model: 
         return default_response
@@ -202,9 +209,9 @@ async def run_ai_analysis(product_title: str):
     Product: "{product_title}"
     
     RULES:
-    1. TRUST THE REVIEW COUNT: If a product has reviews, it is RELEASED.
+    1. TRUST THE REVIEW COUNT: If a product has reviews on Amazon, it is RELEASED.
     2. IGNORE your training data cutoff regarding release dates.
-    3. FOCUS ONLY ON SCAMS: Look for impossible deals like "16TB SSD for $20" or gibberish brand names.
+    3. FOCUS ONLY ON SCAMS: Look for "16TB SSD for $20" or gibberish brand names.
     4. If the specs look realistic for the price, verdict is SAFE.
     
     Respond in this format: VERDICT | REASON
@@ -213,11 +220,12 @@ async def run_ai_analysis(product_title: str):
     """
 
     try:
-        response = model.generate_content(prompt)
+        response = await asyncio.to_thread(model.generate_content, prompt)
         text = response.text.strip()
         
         verdict = "SAFE"
         reason = "Verified."
+        score = 90
 
         if "|" in text:
             parts = text.split("|", 1)
@@ -225,13 +233,13 @@ async def run_ai_analysis(product_title: str):
             reason_raw = parts[1].strip()
             
             if "SAFE" in verdict_raw:
-                verdict = "SAFE"
+                verdict = "SAFE"; score = 90
             elif "SUSPICIOUS" in verdict_raw:
-                verdict = "SUSPICIOUS"
+                verdict = "SUSPICIOUS"; score = 40
             
             reason = reason_raw
 
-        return {"verdict": verdict, "reason": reason}
+        return {"verdict": verdict, "score": score, "reason": reason}
 
     except Exception as e:
         print(f"❌ AI Error: {e}")
