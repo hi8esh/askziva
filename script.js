@@ -74,9 +74,9 @@ async function scanLink() {
                 <div style="font-size: 11px; color: #666; margin-bottom: 4px;"><strong>💰 MARKET SCANNER</strong></div>`;
             data.competitors.forEach(comp => {
                 // Check if competitor is cheaper than current price
-                let dealStyle = "color: #3fb950;";
+                let dealStyle = "color: #28a745;";  // Readable green
                 if (currentPrice > 0 && comp.price < currentPrice) {
-                    dealStyle = "color: #ffeb3b; font-weight: bold; text-decoration: underline;"; // Highlight better deals
+                    dealStyle = "color: #ffc107; font-weight: bold; text-decoration: underline;"; // Gold for better deals
                 }
 
                 marketHtml += `
