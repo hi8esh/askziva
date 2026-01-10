@@ -28,15 +28,16 @@ class PriceHunter:
         try:
             print(f"🕵️‍♂️ Scanning Flipkart for '{query}'...")
             await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=30000, wait_until="domcontentloaded")
-            await asyncio.sleep(2)  # Let JS render
+            await asyncio.sleep(3)  # Let JS render
             
             try:
-                await page.wait_for_selector('div[data-id], div._1AtVbE, div.tUxRFH', timeout=8000)
+                # More lenient selector - just wait for any product container
+                await page.wait_for_selector('div._75nlfW, div._1AtVbE, div.tUxRFH, div[data-id]', timeout=10000)
             except:
                 print("⚠️ Flipkart: No product cards detected")
                 return None
 
-            products = await page.eval_on_selector_all('div[data-id], div._1AtVbE, div.tUxRFH', """
+            products = await page.eval_on_selector_all('div._75nlfW, div._1AtVbE, div.tUxRFH, div[data-id]', """
                 elements => elements.map(el => {
                     const titleEl = el.querySelector('div.RG5Slk, div.KzDlHZ, div._4rR01T, a.s1Q9rs');
                     const priceEl = el.querySelector('div.hZ3P6w, div.DeU9vF, div.Nx9bqj, div._30jeq3');
@@ -168,8 +169,25 @@ class PriceHunter:
             task1 = self.search_flipkart(page1, clean_query)
             task2 = self.search_croma(page2, clean_query)
             
-            res1, res2 = await asyncio.gather(task1, task2)
-            await browser.close()
+            # Wait for both tasks with exception handling
+            res1, res2 = None, None
+            try:
+                res1, res2 = await asyncio.gather(task1, task2, return_exceptions=True)
+                # Filter out exceptions
+                if isinstance(res1, Exception):
+                    print(f"⚠️ Flipkart task exception: {res1}")
+                    res1 = None
+                if isinstance(res2, Exception):
+                    print(f"⚠️ Croma task exception: {res2}")
+                    res2 = None
+            except Exception as e:
+                print(f"⚠️ Market scanner gather error: {e}")
+            
+            # Close browser after all tasks complete
+            try:
+                await browser.close()
+            except:
+                pass
             
             if res1: results.append(res1)
             if res2: results.append(res2)
