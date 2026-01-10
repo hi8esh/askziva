@@ -1,6 +1,14 @@
 import asyncio
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async as stealth
+# Stealth import compatibility: support multiple playwright-stealth versions
+try:
+    from playwright_stealth import stealth_async as stealth  # v1 API
+except Exception:
+    try:
+        from playwright_stealth import stealth  # v2 API
+    except Exception:
+        async def stealth(page):  # no-op fallback
+            return
 import re
 
 class HistoryHunter:
