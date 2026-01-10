@@ -1,25 +1,5 @@
 import asyncio
 from playwright.async_api import async_playwright
-# Stealth import compatibility: normalize to a callable function
-try:
-    from playwright_stealth import stealth_async as stealth_fn  # v1 API
-except Exception:
-    try:
-        from playwright_stealth import stealth as stealth_fn  # v2 API may export a function or a module
-        if not callable(stealth_fn):
-            import playwright_stealth as _ps
-            if hasattr(_ps, "stealth_async") and callable(getattr(_ps, "stealth_async")):
-                async def stealth_fn(page):
-                    return await _ps.stealth_async(page)
-            elif hasattr(_ps, "stealth") and callable(getattr(_ps, "stealth")):
-                async def stealth_fn(page):
-                    return await _ps.stealth(page)
-            else:
-                async def stealth_fn(page):
-                    return
-    except Exception:
-        async def stealth_fn(page):
-            return
 import re
 
 class HistoryHunter:
@@ -29,37 +9,33 @@ class HistoryHunter:
         clean_query = query.split("(")[0].split("|")[0].strip()
         
         async with async_playwright() as p:
-            # Hardened launch for container hosts
-            browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]) 
+            # STEALTH MODE: headless=True
+            browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 800}
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-            context.set_default_timeout(25000)
             page = await context.new_page()
-            await stealth_fn(page)
             
             try:
                 # 1. SEARCH
-                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=30000, wait_until="domcontentloaded")
-                await asyncio.sleep(4)  # Wait for JS to render search results
+                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=20000)
                 
-                # 2. FIND PRODUCT LINK - More specific selectors
+                # 2. FIND PRODUCT LINK
                 try:
-                    # Look specifically for product result links, not just any element
-                    first_product = await page.wait_for_selector('a[href*="/product/"], a[href*="/p/"], .product-link, .search-result a', timeout=12000)
+                    await page.wait_for_selector('div', state="attached")
+                    # We click the first product card
+                    first_product = await page.wait_for_selector('a[href*="/product/"]', timeout=8000)
                     
                     if first_product:
                         product_url = await first_product.get_attribute('href')
-                        full_url = f"https://pricehistoryapp.com{product_url}" if product_url and not product_url.startswith("http") else product_url
+                        full_url = f"https://pricehistoryapp.com{product_url}" if not product_url.startswith("http") else product_url
                         print(f"📍 Analyzing History Page: {full_url}")
-                        await page.goto(full_url, timeout=30000, wait_until="domcontentloaded")
-                        await asyncio.sleep(3)  # Let JS render
+                        await page.goto(full_url, timeout=20000)
                     else:
                         print("❌ History: No product links found.")
                         await browser.close(); return None
-                except Exception as e:
-                    print(f"❌ History: Product link search failed - {e}")
+                except:
+                    print("❌ History: Search failed.")
                     await browser.close(); return None
 
                 # 3. READ THE SUMMARY SENTENCE
