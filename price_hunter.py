@@ -11,7 +11,8 @@ class PriceHunter:
             
             try:
                 await page.wait_for_selector('div.RG5Slk, div.KzDlHZ, div._4rR01T, a.s1Q9rs', timeout=5000)
-            except: pass
+            except:
+                print("⚠️ Flipkart: Selector timeout, trying scrape anyway")
 
             products = await page.eval_on_selector_all('div[data-id], div._1AtVbE', """
                 elements => elements.map(el => {
@@ -25,15 +26,25 @@ class PriceHunter:
                 }).filter(item => item !== null)
             """)
 
+            print(f"📦 Flipkart: Found {len(products)} product cards")
+            
             for item in products:
                 try:
                     price_clean = int(item['price'].replace("₹", "").replace(",", "").split(" ")[0].strip())
-                    if fuzz.partial_ratio(query.lower(), item['title'].lower()) > 60:
+                    match_score = fuzz.partial_ratio(query.lower(), item['title'].lower())
+                    print(f"🔍 Flipkart: '{item['title'][:40]}' - Match: {match_score}%")
+                    if match_score > 60:
                         full_link = "https://www.flipkart.com" + item['link'] if item['link'] and not item['link'].startswith("http") else item['link']
+                        print(f"✅ Flipkart: {item['title'][:50]} @ ₹{price_clean}")
                         return {"site": "Flipkart", "title": item['title'], "price": price_clean, "link": full_link}
-                except: continue 
+                except Exception as e:
+                    print(f"⚠️ Flipkart: Failed to parse product - {e}")
+                    continue 
+            print("⚠️ Flipkart: No products matched fuzzy threshold")
             return None
-        except: return None
+        except Exception as e:
+            print(f"❌ Flipkart Error: {e}")
+            return None
 
     # --- AGENT 2: CROMA (Popup Killer Edition) ---
     async def search_croma(self, page, query):
