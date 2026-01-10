@@ -1,13 +1,24 @@
 import asyncio
 from playwright.async_api import async_playwright
-# Stealth import compatibility: support multiple playwright-stealth versions
+# Stealth import compatibility: normalize to a callable function
 try:
-    from playwright_stealth import stealth_async as stealth  # v1 API
+    from playwright_stealth import stealth_async as stealth_fn  # v1 API
 except Exception:
     try:
-        from playwright_stealth import stealth  # v2 API
+        from playwright_stealth import stealth as stealth_fn  # v2 API may export a function or a module
+        if not callable(stealth_fn):
+            import playwright_stealth as _ps
+            if hasattr(_ps, "stealth_async") and callable(getattr(_ps, "stealth_async")):
+                async def stealth_fn(page):
+                    return await _ps.stealth_async(page)
+            elif hasattr(_ps, "stealth") and callable(getattr(_ps, "stealth")):
+                async def stealth_fn(page):
+                    return await _ps.stealth(page)
+            else:
+                async def stealth_fn(page):
+                    return
     except Exception:
-        async def stealth(page):  # no-op fallback
+        async def stealth_fn(page):
             return
 import re
 
@@ -26,7 +37,7 @@ class HistoryHunter:
             )
             context.set_default_timeout(25000)
             page = await context.new_page()
-            await stealth(page)
+            await stealth_fn(page)
             
             try:
                 # 1. SEARCH
