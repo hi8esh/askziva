@@ -9,17 +9,20 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 
 # --- CUSTOM MODULES ---
+PLAYWRIGHT_AVAILABLE = True
 try:
     from price_hunter import PriceHunter
 except ImportError:
     print("⚠️ WARNING: price_hunter.py not found. Market scanning disabled.")
     PriceHunter = None
+    PLAYWRIGHT_AVAILABLE = False
 
 try:
     from history_hunter import HistoryHunter
 except ImportError:
     print("⚠️ WARNING: history_hunter.py not found. History check disabled.")
     HistoryHunter = None
+    PLAYWRIGHT_AVAILABLE = False
 
 load_dotenv()
 
