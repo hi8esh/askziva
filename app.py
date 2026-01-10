@@ -10,17 +10,34 @@ import google.generativeai as genai
 
 # --- CUSTOM MODULES ---
 PLAYWRIGHT_AVAILABLE = True
+
+# Debug: show cwd and top-level files when imports fail
+def _debug_import_env(module_name: str, exc: Exception):
+    try:
+        cwd = os.getcwd()
+        files = []
+        try:
+            files = os.listdir('.')
+        except Exception as _:
+            pass
+        print(f"⚠️ IMPORT DEBUG: Failed to import {module_name}. CWD={cwd}. Files={files[:20]}")
+        print(f"⚠️ IMPORT ERROR: {type(exc).__name__}: {exc}")
+    except Exception as _:
+        pass
+
 try:
     from price_hunter import PriceHunter
-except ImportError:
-    print("⚠️ WARNING: price_hunter.py not found. Market scanning disabled.")
+except Exception as e:
+    _debug_import_env('price_hunter', e)
+    print("⚠️ WARNING: price_hunter.py not loaded. Market scanning disabled.")
     PriceHunter = None
     PLAYWRIGHT_AVAILABLE = False
 
 try:
     from history_hunter import HistoryHunter
-except ImportError:
-    print("⚠️ WARNING: history_hunter.py not found. History check disabled.")
+except Exception as e:
+    _debug_import_env('history_hunter', e)
+    print("⚠️ WARNING: history_hunter.py not loaded. History check disabled.")
     HistoryHunter = None
     PLAYWRIGHT_AVAILABLE = False
 
