@@ -71,9 +71,9 @@ class PriceHunter:
 
                 # 3. WAIT FOR RESULTS
                 # Increased timeout to 15s because Croma is slow
-                try {
+                try:
                     await page.wait_for_selector('li.product-item, div.product-item, div.cp-product-box', timeout=20000)
-                } catch(e) {}
+                except: pass
                 try:
                     await page.wait_for_load_state('networkidle', timeout=10000)
                 except: pass
