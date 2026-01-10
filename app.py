@@ -65,7 +65,7 @@ else:
 
 
 def extract_product_title(url):
-    """Extract product title and price from Amazon/Flipkart URL"""
+    """Extract product title, price, and review count from Amazon/Flipkart URL"""
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -76,6 +76,7 @@ def extract_product_title(url):
         # Try Amazon title
         title_tag = soup.find("span", {"id": "productTitle"})
         current_price = 0
+        review_count = 0
         
         if title_tag:
             # Extract current price from Amazon
@@ -87,29 +88,38 @@ def extract_product_title(url):
                 except:
                     pass
             
+            # Extract review count from Amazon
+            review_tag = soup.find("span", {"id": "acrCustomerReviewText"})
+            if review_tag:
+                try:
+                    review_text = review_tag.get_text().strip()
+                    review_count = int(review_text.split()[0].replace(",", ""))
+                except:
+                    pass
+            
             full_title = title_tag.get_text().strip()
-            print(f"✅ Extracted: {full_title[:80]}... @ ₹{current_price}")
-            return full_title, current_price
+            print(f"✅ Extracted: {full_title[:80]}... @ ₹{current_price} | {review_count} reviews")
+            return full_title, current_price, review_count
         
         # Try Flipkart/Croma title
         title_tag = soup.find("h1")
         if title_tag:
             full_title = title_tag.get_text().strip()
             print(f"✅ Extracted: {full_title[:80]}...")
-            return full_title, current_price
+            return full_title, current_price, 0
         
         # Fallback: extract from URL
         if "amazon" in url.lower():
             title = url.split("/dp/")[0].split("/")[-1]
             fallback_title = title.replace("-", " ") if title else "Unknown Product"
             print(f"⚠️ Fallback URL-based title: {fallback_title}")
-            return fallback_title, current_price
+            return fallback_title, current_price, 0
         
         print("⚠️ Could not extract title from page")
-        return "Unknown Product", current_price
+        return "Unknown Product", current_price, 0
     except Exception as e:
         print(f"❌ Title/Price extraction failed: {e}")
-        return "Unknown Product", 0
+        return "Unknown Product", 0, 0
 
 
 @app.get("/")
@@ -125,15 +135,15 @@ async def scan_endpoint(request_data: dict):
     
     url = request_data['url']
     
-    # Extract product title and current price from URL
-    product_title, current_price = extract_product_title(url)
-    print(f"\n🔎 STARTING INVESTIGATION: {product_title} | Current Price: ₹{current_price}")
+    # Extract product title, current price, and review count from URL
+    product_title, current_price, review_count = extract_product_title(url)
+    print(f"\n🔎 STARTING INVESTIGATION: {product_title} | Current Price: ₹{current_price} | Reviews: {review_count}")
     
     # --- STEP 1: PARALLEL EXECUTION ---
     # We launch 3 tasks: AI Analysis, Price Hunt, History Hunt
     
     # Task A: AI
-    ai_task = asyncio.create_task(run_ai_analysis(product_title))
+    ai_task = asyncio.create_task(run_ai_analysis(product_title, review_count))
     
     # Task B: Market Scanner (Flipkart, Croma)
     hunter_task = None
@@ -196,7 +206,7 @@ async def scan_endpoint(request_data: dict):
     return final_response
 
 
-async def run_ai_analysis(product_title: str):
+async def run_ai_analysis(product_title: str, review_count: int = 0):
     """AI Analysis Task"""
     default_response = {
         "verdict": "UNKNOWN", "score": 50, "reason": "AI currently unavailable."
@@ -204,19 +214,23 @@ async def run_ai_analysis(product_title: str):
     if not model: 
         return default_response
 
+    review_info = f"{review_count:,} reviews" if review_count > 0 else "No review data available"
+    
     prompt = f"""
     Act as Ziva, a fraud detection AI.
     Product: "{product_title}"
+    Reviews: {review_info}
     
     RULES:
-    1. TRUST THE REVIEW COUNT: If a product has reviews on Amazon, it is RELEASED.
+    1. TRUST THE REVIEW COUNT: If a product has {review_count} reviews on Amazon, it is RELEASED and VERIFIED.
     2. IGNORE your training data cutoff regarding release dates.
     3. FOCUS ONLY ON SCAMS: Look for "16TB SSD for $20" or gibberish brand names.
-    4. If the specs look realistic for the price, verdict is SAFE.
+    4. If the specs look realistic for the price AND has reviews, verdict is SAFE.
+    5. If no reviews, be more cautious but still analyze specs.
     
     Respond in this format: VERDICT | REASON
-    Example: SAFE | Specs match price and high review count confirms authenticity.
-    Example: SUSPICIOUS | Generic brand name with impossible specs.
+    Example: SAFE | Product has {review_info}. Specs match expected price range.
+    Example: SUSPICIOUS | Generic brand name with impossible specs despite reviews.
     """
 
     try:

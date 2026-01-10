@@ -145,11 +145,13 @@ class PriceHunter:
             task1 = self.search_flipkart(page1, clean_query)
             task2 = self.search_croma(page2, clean_query)
             
-            res1, res2 = await asyncio.gather(task1, task2)
+            res1, res2 = await asyncio.gather(task1, task2, return_exceptions=True)
             await browser.close()
             
-            if res1: results.append(res1)
-            if res2: results.append(res2)
+            if res1 and not isinstance(res1, Exception): 
+                results.append(res1)
+            if res2 and not isinstance(res2, Exception): 
+                results.append(res2)
             
         return results
 
