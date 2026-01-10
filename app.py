@@ -131,9 +131,9 @@ async def scan_endpoint(request_data: dict):
     competitor_data = []
     if hunter_task:
         try:
-            competitor_data = await asyncio.wait_for(hunter_task, timeout=25)
+            competitor_data = await asyncio.wait_for(hunter_task, timeout=40)
         except asyncio.TimeoutError:
-            print(f"⚠️ TIMEOUT: Market Scanner took too long (>25s)")
+            print(f"⚠️ TIMEOUT: Market Scanner took too long (>40s)")
             competitor_data = []
         except Exception as e:
             print(f"❌ Market Scanner Error: {e}")
@@ -142,9 +142,9 @@ async def scan_endpoint(request_data: dict):
     history_data = None
     if history_task:
         try:
-            history_data = await asyncio.wait_for(history_task, timeout=25)
+            history_data = await asyncio.wait_for(history_task, timeout=40)
         except asyncio.TimeoutError:
-            print(f"⚠️ TIMEOUT: Price History took too long (>25s)")
+            print(f"⚠️ TIMEOUT: Price History took too long (>40s)")
             history_data = None
         except Exception as e:
             print(f"❌ Price History Error: {e}")

@@ -1,13 +1,17 @@
 import asyncio
 from playwright.async_api import async_playwright
 from thefuzz import fuzz
+from playwright_stealth import stealth_async as stealth
 
 class PriceHunter:
     # --- AGENT 1: FLIPKART ---
     async def search_flipkart(self, page, query):
         try:
             print(f"🕵️‍♂️ Scanning Flipkart for '{query}'...")
-            await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=15000)
+            await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=30000, wait_until="domcontentloaded")
+            try:
+                await page.wait_for_load_state('networkidle', timeout=15000)
+            except: pass
             
             try:
                 await page.wait_for_selector('div.RG5Slk, div.KzDlHZ, div._4rR01T, a.s1Q9rs', timeout=5000)
@@ -39,7 +43,7 @@ class PriceHunter:
     async def search_croma(self, page, query):
         try:
             print(f"🕵️‍♂️ Scanning Croma for '{query}'...")
-            await page.goto("https://www.croma.com/", timeout=20000)
+            await page.goto("https://www.croma.com/", timeout=30000, wait_until="domcontentloaded")
             
             # 1. POPUP KILLER & WAITER
             try:
@@ -54,7 +58,7 @@ class PriceHunter:
             # We look for ANY visible text input. The search bar is usually the first one in the header.
             try:
                 # Selector: Find any input that is text or search type
-                search_input = await page.wait_for_selector('input[type="text"], input[type="search"]', state="visible", timeout=15000)
+                search_input = await page.wait_for_selector('input[type="text"], input[type="search"]', state="visible", timeout=20000)
                 
                 if search_input:
                     await search_input.click()
@@ -67,7 +71,12 @@ class PriceHunter:
 
                 # 3. WAIT FOR RESULTS
                 # Increased timeout to 15s because Croma is slow
-                await page.wait_for_selector('li.product-item, div.product-item, div.cp-product-box', timeout=15000)
+                try {
+                    await page.wait_for_selector('li.product-item, div.product-item, div.cp-product-box', timeout=20000)
+                } catch(e) {}
+                try:
+                    await page.wait_for_load_state('networkidle', timeout=10000)
+                except: pass
                 
             except Exception as e:
                 print(f"❌ Croma Navigation Failed: {e}")
@@ -114,15 +123,18 @@ class PriceHunter:
         results = []
         
         async with async_playwright() as p:
-            # STEALTH MODE
-            browser = await p.chromium.launch(headless=True)
+            # Hardened launch for container hosts
+            browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]) 
             context = await browser.new_context(
-                # Real User Agent is critical for Croma
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 800}
             )
+            context.set_default_timeout(25000)
             
             page1 = await context.new_page()
             page2 = await context.new_page()
+            await stealth(page1)
+            await stealth(page2)
             
             task1 = self.search_flipkart(page1, clean_query)
             task2 = self.search_croma(page2, clean_query)
