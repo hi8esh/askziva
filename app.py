@@ -38,8 +38,8 @@ model = None
 
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('models/gemini-3-flash-preview') 
-    print("🧠 AI CORTEX: Connected (Gemini 3 flash)")
+    model = genai.GenerativeModel('models/gemma-3-27b-it') 
+    print("🧠 AI CORTEX: Connected (Gemma 3 27B)")
 else:
     print("⚠️ AI CORTEX: OFFLINE (Missing GEMINI_API_KEY)")
 
