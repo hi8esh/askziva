@@ -114,10 +114,12 @@ class PriceHunter:
         results = []
         
         async with async_playwright() as p:
-            # STEALTH MODE
-            browser = await p.chromium.launch(headless=True)
+            # RENDER-COMPATIBLE: no-sandbox + disable-dev-shm-usage
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
+            )
             context = await browser.new_context(
-                # Real User Agent is critical for Croma
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             
@@ -127,7 +129,17 @@ class PriceHunter:
             task1 = self.search_flipkart(page1, clean_query)
             task2 = self.search_croma(page2, clean_query)
             
-            res1, res2 = await asyncio.gather(task1, task2)
+            # Isolate exceptions
+            res1, res2 = await asyncio.gather(task1, task2, return_exceptions=True)
+            
+            # Filter out exceptions
+            if isinstance(res1, Exception):
+                print(f"⚠️ Flipkart exception: {res1}")
+                res1 = None
+            if isinstance(res2, Exception):
+                print(f"⚠️ Croma exception: {res2}")
+                res2 = None
+            
             await browser.close()
             
             if res1: results.append(res1)
