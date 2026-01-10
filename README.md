@@ -4,11 +4,11 @@ FastAPI service powering AskZiva commerce intelligence.
 
 ## Run Locally
 
-1. Install dependencies and Playwright browsers:
+1. Install dependencies and Playwright Chromium:
 
 ```
 pip install -r requirements.txt
-python -m playwright install --with-deps
+python -m playwright install chromium
 ```
 
 2. Start the API:
@@ -21,7 +21,7 @@ uvicorn app:app --host 0.0.0.0 --port 10000
 
 This repo includes a [render.yaml](render.yaml) Blueprint:
 
-- Build Command: `pip install -r requirements.txt && python -m playwright install --with-deps`
+- Build Command: `pip install -r requirements.txt && python -m playwright install chromium`
 - Start Command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
 
 ### Option A: Use the Blueprint
@@ -31,7 +31,7 @@ This repo includes a [render.yaml](render.yaml) Blueprint:
 
 ### Option B: Update an existing Web Service
 1. Open your service in Render.
-2. Set Build Command to: `pip install -r requirements.txt && python -m playwright install --with-deps`
+2. Set Build Command to: `pip install -r requirements.txt && python -m playwright install chromium`
 3. Set Start Command to: `uvicorn app:app --host 0.0.0.0 --port $PORT`
 4. Save and trigger a redeploy.
 
