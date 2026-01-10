@@ -1,144 +1,210 @@
 import os
-import google.generativeai as genai
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import json
+import asyncio
 import requests
 from bs4 import BeautifulSoup
-import re
-from datetime import datetime  # <--- NEW: Give Ziva a watch
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from dotenv import load_dotenv
+import google.generativeai as genai
+
+# --- CUSTOM MODULES ---
+try:
+    from price_hunter import PriceHunter
+except ImportError:
+    print("⚠️ WARNING: price_hunter.py not found. Market scanning disabled.")
+    PriceHunter = None
+
+try:
+    from history_hunter import HistoryHunter
+except ImportError:
+    print("⚠️ WARNING: history_hunter.py not found. History check disabled.")
+    HistoryHunter = None
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
-# 1. SETUP GEMINI
-api_key = os.environ.get("GEMINI_API_KEY")
+# Initialize AI Client
+api_key = os.getenv("GEMINI_API_KEY")
+model = None
+
 if api_key:
     genai.configure(api_key=api_key)
-    # Sticking to the model you found works, but adding logic to fix the date issue
     model = genai.GenerativeModel('models/gemini-3-flash-preview') 
-    print("🧠 AI CORTEX: ONLINE (Gemini 3 Flash)")
+    print("🧠 AI CORTEX: Connected (Gemini 3 flash)")
 else:
-    print("⚠️ AI CORTEX: OFFLINE (No Key Found)")
-    model = None
+    print("⚠️ AI CORTEX: OFFLINE (Missing GEMINI_API_KEY)")
 
-def ziva_truth_engine(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Accept-Language": "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7"
-    }
-    
+
+def extract_product_title(url):
+    """Extract product title and price from Amazon/Flipkart URL"""
     try:
-        # --- PHASE 1: DEEP SCRAPING ---
-        response = requests.get(url, headers=headers)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, "html.parser")
         
-        # Title
+        # Try Amazon title
         title_tag = soup.find("span", {"id": "productTitle"})
-        title_text = title_tag.get_text().strip() if title_tag else "Unknown Product"
-
-        # Price
-        price_tag = soup.find("span", {"class": "a-price-whole"})
-        price = "₹" + price_tag.get_text().replace(".", "").strip() if price_tag else "Price Hidden"
+        current_price = 0
         
-        # Details (Bullets)
-        features = ""
-        feature_bullets = soup.find("div", {"id": "feature-bullets"})
-        if feature_bullets:
-            features = feature_bullets.get_text().strip()[:500]
-        
-        # Rating & Reviews
-        rating = 0.0
-        review_count = 0
-        rating_tag = soup.find("span", {"class": "a-icon-alt"})
-        if rating_tag:
-             try: rating = float(rating_tag.get_text().split(" ")[0])
-             except: pass
-        
-        review_selectors = [{"id": "acrCustomerReviewText"}, {"data-hook": "total-review-count"}, {"class": "a-size-base", "dir": "auto"}]
-        for selector in review_selectors:
-            if review_count > 0: break
-            tag = soup.find("span", selector)
-            if tag:
-                try: review_count = int(re.findall(r'\d+', tag.get_text().replace(",", ""))[0])
-                except: pass
-
-        # --- PHASE 2: AI ANALYSIS (Time-Aware) ---
-        # --- PHASE 2: AI ANALYSIS (Focused Mode) ---
-        ai_verdict = "NEUTRAL"
-        ai_reason = "AI did not run."
-        
-        if model:
-            try:
-                # UPDATED PROMPT: We strictly forbid the AI from guessing release dates.
-                prompt = f"""
-                Act as Ziva, a fraud detection AI.
-                
-                Product: "{title_text}"
-                Price: "{price}"
-                Review Count: {review_count}
-                Details: "{features}"
-                
-                RULES:
-                1. TRUST THE REVIEW COUNT: If reviews > 100, the product is REAL and RELEASED. Do not claim it is "unreleased" or "rumored".
-                2. IGNORE your training data cutoff regarding release dates.
-                3. FOCUS ONLY ON SCAMS: Look for "16TB SSD for $20" or gibberish brand names.
-                4. If the specs look realistic for the price, verdict is SAFE.
-                
-                Respond in this format: VERDICT | REASON
-                Example: SAFE | Specs match price and high review count confirms authenticity.
-                Example: SUSPICIOUS | Generic brand name with impossible specs.
-                """
-                response = model.generate_content(prompt)
-                text = response.text.strip()
-                if "|" in text:
-                    ai_verdict, ai_reason = text.split("|", 1)
-                    ai_verdict = ai_verdict.strip()
-                    ai_reason = ai_reason.strip()
-            except Exception as e:
-                print(f"AI Error: {e}")
-                ai_reason = f"AI Error: {str(e)}"
-
-        # --- PHASE 3: FINAL JUDGMENT ---
-        final_verdict = "⚠️ UNKNOWN"
-        final_reason = "Insufficient Data"
-        
-        # Logic Fix: If reviews exist, we override the AI's "Unreleased" hallucination
-        if "SUSPICIOUS" in ai_verdict.upper():
-            if "unreleased" in ai_reason.lower() and review_count > 500:
-                 final_verdict = "✅ LIKELY SAFE"
-                 final_reason = f"Released Product: {review_count} verified reviews override AI release date warning."
-            else:
-                final_verdict = "❌ HIGH RISK (AI ALERT)"
-                final_reason = f"Ziva Intelligence: {ai_reason}"
-                
-        elif review_count < 10 and review_count >= 0:
-            final_verdict = "❌ HIGH RISK"
-            final_reason = "New Seller (Less than 10 reviews)."
-        elif rating >= 4.0 and review_count > 50:
-            final_verdict = "✅ LIKELY SAFE"
-            final_reason = f"Verified: {rating} stars & AI Analysis."
+        if title_tag:
+            # Extract current price from Amazon
+            price_tag = soup.find("span", {"class": "a-price-whole"})
+            if price_tag:
+                try:
+                    price_text = price_tag.get_text().replace("₹", "").replace(",", "").strip()
+                    current_price = int(float(price_text.split(".")[0]))
+                except:
+                    pass
             
-        return {
-            "verdict": final_verdict,
-            "reason": final_reason,
-            "product": title_text[:60] + "...",
-            "price": price
-        }
-
+            return title_tag.get_text().strip(), current_price
+        
+        # Try Flipkart/Croma title
+        title_tag = soup.find("h1")
+        if title_tag:
+            return title_tag.get_text().strip(), current_price
+        
+        # Fallback: extract from URL
+        if "amazon" in url.lower():
+            title = url.split("/dp/")[0].split("/")[-1]
+            return (title.replace("-", " ") if title else "Unknown Product"), current_price
+        
+        return "Unknown Product", current_price
     except Exception as e:
-        return {"verdict": "❌ ERROR", "reason": str(e), "product": "Error", "price": "Error"}
+        print(f"⚠️ Title/Price extraction failed: {e}")
+        return "Unknown Product", 0
 
-@app.route('/')
+
+@app.route("/")
 def home():
-    return "Ziva Cortex (Time-Aware) is Online! 🧠🕰️"
+    return {"status": "Ziva Intelligence System Online ⚡", "modules": ["AI", "Market", "History"]}
+
 
 @app.route('/scan', methods=['POST'])
-def scan_endpoint():
+async def scan_endpoint():
+    """Main API endpoint for URL scanning"""
     data = request.get_json()
     if not data or 'url' not in data:
         return jsonify({"error": "No URL provided"}), 400
-    result = ziva_truth_engine(data['url'])
-    return jsonify(result)
+    
+    url = data['url']
+    
+    # Extract product title and current price from URL
+    product_title, current_price = extract_product_title(url)
+    print(f"\n🔎 STARTING INVESTIGATION: {product_title} | Current Price: ₹{current_price}")
+    
+    # --- STEP 1: PARALLEL EXECUTION ---
+    # We launch 3 tasks: AI Analysis, Price Hunt, History Hunt
+    
+    # Task A: AI
+    ai_task = asyncio.create_task(run_ai_analysis(product_title))
+    
+    # Task B: Market Scanner (Flipkart, Croma)
+    hunter_task = None
+    if PriceHunter:
+        hunter = PriceHunter()
+        hunter_task = asyncio.create_task(hunter.hunt(product_title))
+
+    # Task C: Price History
+    history_task = None
+    if HistoryHunter:
+        historian = HistoryHunter()
+        history_task = asyncio.create_task(historian.get_history(product_title))
+    
+    # --- STEP 2: GATHER RESULTS ---
+    # We wait for AI (Critical)
+    ai_result = await ai_task
+    
+    # We wait for others (Optional)
+    competitor_data = []
+    if hunter_task:
+        try:
+            competitor_data = await asyncio.wait_for(hunter_task, timeout=30)
+        except:
+            competitor_data = []
+        
+    history_data = None
+    if history_task:
+        try:
+            history_data = await asyncio.wait_for(history_task, timeout=30)
+        except:
+            history_data = None
+
+    # --- STEP 3: SYNTHESIS ---
+    final_response = ai_result
+    final_response["competitors"] = competitor_data
+    final_response["history"] = history_data
+    final_response["current_price"] = current_price  # Send current price to frontend
+    
+    # Logic: Check for savings
+    if competitor_data:
+        best_deal = min(competitor_data, key=lambda x: x['price'])
+        
+        final_response["market_intel"] = {
+            "best_price": best_deal['price'],
+            "best_site": best_deal['site'],
+            "link": best_deal['link']
+        }
+        # Add alert to reason text
+        final_response["reason"] += f" (Found on {best_deal['site']} for ₹{best_deal['price']:,})"
+
+    print(f"✅ REPORT GENERATED: {final_response.get('verdict', 'UNKNOWN')}")
+    return jsonify(final_response)
+
+
+async def run_ai_analysis(product_title: str):
+    """AI Analysis Task"""
+    default_response = {
+        "verdict": "UNKNOWN", "reason": "AI currently unavailable."
+    }
+    if not model: 
+        return default_response
+
+    prompt = f"""
+    Act as Ziva, a fraud detection AI.
+    Product: "{product_title}"
+    
+    RULES:
+    1. TRUST THE REVIEW COUNT: If a product has reviews, it is RELEASED.
+    2. IGNORE your training data cutoff regarding release dates.
+    3. FOCUS ONLY ON SCAMS: Look for impossible deals like "16TB SSD for $20" or gibberish brand names.
+    4. If the specs look realistic for the price, verdict is SAFE.
+    
+    Respond in this format: VERDICT | REASON
+    Example: SAFE | Specs match price and high review count confirms authenticity.
+    Example: SUSPICIOUS | Generic brand name with impossible specs.
+    """
+
+    try:
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        
+        verdict = "SAFE"
+        reason = "Verified."
+
+        if "|" in text:
+            parts = text.split("|", 1)
+            verdict_raw = parts[0].strip().upper()
+            reason_raw = parts[1].strip()
+            
+            if "SAFE" in verdict_raw:
+                verdict = "SAFE"
+            elif "SUSPICIOUS" in verdict_raw:
+                verdict = "SUSPICIOUS"
+            
+            reason = reason_raw
+
+        return {"verdict": verdict, "reason": reason}
+
+    except Exception as e:
+        print(f"❌ AI Error: {e}")
+        return default_response
+
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)

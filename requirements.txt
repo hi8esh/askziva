@@ -1,6 +1,10 @@
 flask
+flask-cors
+google-generativeai
+python-dotenv
+playwright
+playwright-stealth
+thefuzz
 requests
 beautifulsoup4
 gunicorn
-flask-cors
-google-generativeai
