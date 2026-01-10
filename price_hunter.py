@@ -7,11 +7,14 @@ class PriceHunter:
     async def search_flipkart(self, page, query):
         try:
             print(f"🕵️‍♂️ Scanning Flipkart for '{query}'...")
-            await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=15000)
+            await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=30000)
+            print("✅ Flipkart: Page loaded")
             
             try:
-                await page.wait_for_selector('div.RG5Slk, div.KzDlHZ, div._4rR01T, a.s1Q9rs', timeout=5000)
-            except: pass
+                await page.wait_for_selector('div.RG5Slk, div.KzDlHZ, div._4rR01T, a.s1Q9rs', timeout=10000)
+                print("✅ Flipkart: Product cards found")
+            except Exception as e:
+                print(f"⚠️ Flipkart: No product cards - {e}")
 
             products = await page.eval_on_selector_all('div[data-id], div._1AtVbE', """
                 elements => elements.map(el => {
@@ -24,22 +27,31 @@ class PriceHunter:
                     return null;
                 }).filter(item => item !== null)
             """)
+            
+            print(f"📊 Flipkart: Extracted {len(products)} products")
 
             for item in products:
                 try:
                     price_clean = int(item['price'].replace("₹", "").replace(",", "").split(" ")[0].strip())
-                    if fuzz.partial_ratio(query.lower(), item['title'].lower()) > 60:
+                    match_score = fuzz.partial_ratio(query.lower(), item['title'].lower())
+                    if match_score > 60:
                         full_link = "https://www.flipkart.com" + item['link'] if item['link'] and not item['link'].startswith("http") else item['link']
+                        print(f"✅ Flipkart MATCH: {item['title'][:50]}... @ ₹{price_clean} (score: {match_score}%)")
                         return {"site": "Flipkart", "title": item['title'], "price": price_clean, "link": full_link}
-                except: continue 
+                except Exception as e:
+                    continue 
+            print("❌ Flipkart: No matches above 60% threshold")
             return None
-        except: return None
+        except Exception as e:
+            print(f"❌ Flipkart Error: {e}")
+            return None
 
     # --- AGENT 2: CROMA (Popup Killer Edition) ---
     async def search_croma(self, page, query):
         try:
             print(f"🕵️‍♂️ Scanning Croma for '{query}'...")
-            await page.goto("https://www.croma.com/", timeout=20000)
+            await page.goto("https://www.croma.com/", timeout=30000)
+            print("✅ Croma: Homepage loaded")
             
             # 1. POPUP KILLER & WAITER
             try:
@@ -47,14 +59,15 @@ class PriceHunter:
                 await page.wait_for_load_state('domcontentloaded')
                 # Press ESCAPE to close "Select Pincode" or "Login" popups
                 await page.keyboard.press("Escape")
-                await asyncio.sleep(1) 
+                await asyncio.sleep(2) 
             except: pass
 
             # 2. FIND SEARCH BAR (The "Dumb" Strategy)
             # We look for ANY visible text input. The search bar is usually the first one in the header.
             try:
                 # Selector: Find any input that is text or search type
-                search_input = await page.wait_for_selector('input[type="text"], input[type="search"]', state="visible", timeout=15000)
+                search_input = await page.wait_for_selector('input[type="text"], input[type="search"]', state="visible", timeout=20000)
+                print("✅ Croma: Search bar found")
                 
                 if search_input:
                     await search_input.click()
@@ -66,8 +79,9 @@ class PriceHunter:
                     return None
 
                 # 3. WAIT FOR RESULTS
-                # Increased timeout to 15s because Croma is slow
-                await page.wait_for_selector('li.product-item, div.product-item, div.cp-product-box', timeout=15000)
+                # Increased timeout to 20s because Croma is slow on Render
+                await page.wait_for_selector('li.product-item, div.product-item, div.cp-product-box', timeout=20000)
+                print("✅ Croma: Results loaded")
                 
             except Exception as e:
                 print(f"❌ Croma Navigation Failed: {e}")

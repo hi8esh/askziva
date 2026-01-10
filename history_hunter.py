@@ -21,13 +21,15 @@ class HistoryHunter:
             
             try:
                 # 1. SEARCH
-                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=20000)
+                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=30000)
+                print("✅ History: Search page loaded")
                 
                 # 2. FIND PRODUCT LINK
                 try:
-                    await page.wait_for_selector('div', state="attached")
+                    await page.wait_for_selector('div', state="attached", timeout=10000)
                     # We click the first product card
-                    first_product = await page.wait_for_selector('a[href*="/product/"]', timeout=8000)
+                    first_product = await page.wait_for_selector('a[href*="/product/"]', timeout=15000)
+                    print("✅ History: Product link found")
                     
                     if first_product:
                         product_url = await first_product.get_attribute('href')
@@ -37,14 +39,15 @@ class HistoryHunter:
                     else:
                         print("❌ History: No product links found.")
                         await browser.close(); return None
-                except:
-                    print("❌ History: Search failed.")
+                except Exception as e:
+                    print(f"❌ History: Search failed - {e}")
                     await browser.close(); return None
 
                 # 3. READ THE SUMMARY SENTENCE
                 # We look for the text block containing "lowest price is"
                 try:
-                    await page.wait_for_selector("text=lowest price is", timeout=10000)
+                    await page.wait_for_selector("text=lowest price is", timeout=15000)
+                    print("✅ History: Price data found")
                     
                     # Extract the full description text
                     page_text = await page.evaluate("""() => {
