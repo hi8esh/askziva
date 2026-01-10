@@ -48,23 +48,22 @@ class HistoryHunter:
                 
                 # 2. FIND PRODUCT LINK
                 try:
-                    await page.wait_for_selector('div', state="attached")
-                    # Click the first product card
-                    first_product = await page.wait_for_selector('a[href*="/product/"]', timeout=15000)
+                    # Wait for any content
+                    await page.wait_for_selector('a, div, span', timeout=8000)
+                    # Click the first product link
+                    first_product = await page.wait_for_selector('a[href*="/product/"]', timeout=10000)
                     
                     if first_product:
                         product_url = await first_product.get_attribute('href')
                         full_url = f"https://pricehistoryapp.com{product_url}" if not product_url.startswith("http") else product_url
                         print(f"📍 Analyzing History Page: {full_url}")
                         await page.goto(full_url, timeout=30000, wait_until="domcontentloaded")
-                        try:
-                            await page.wait_for_load_state('networkidle', timeout=10000)
-                        except: pass
+                        await asyncio.sleep(3)  # Let JS render
                     else:
                         print("❌ History: No product links found.")
                         await browser.close(); return None
-                except:
-                    print("❌ History: Search failed.")
+                except Exception as e:
+                    print(f"❌ History: Product link search failed - {e}")
                     await browser.close(); return None
 
                 # 3. READ THE SUMMARY SENTENCE
