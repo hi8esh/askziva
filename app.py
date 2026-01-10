@@ -3,8 +3,8 @@ import json
 import asyncio
 import requests
 from bs4 import BeautifulSoup
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -23,8 +23,14 @@ except ImportError:
 
 load_dotenv()
 
-app = Flask(__name__)
-CORS(app)
+app = FastAPI(title="ZIVA: Commerce Intelligence Engine")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize AI Client
 api_key = os.getenv("GEMINI_API_KEY")
@@ -79,19 +85,18 @@ def extract_product_title(url):
         return "Unknown Product", 0
 
 
-@app.route("/")
+@app.get("/")
 def home():
     return {"status": "Ziva Intelligence System Online ⚡", "modules": ["AI", "Market", "History"]}
 
 
-@app.route('/scan', methods=['POST'])
-async def scan_endpoint():
+@app.post("/scan")
+async def scan_endpoint(request_data: dict):
     """Main API endpoint for URL scanning"""
-    data = request.get_json()
-    if not data or 'url' not in data:
-        return jsonify({"error": "No URL provided"}), 400
+    if 'url' not in request_data:
+        return {"error": "No URL provided"}
     
-    url = data['url']
+    url = request_data['url']
     
     # Extract product title and current price from URL
     product_title, current_price = extract_product_title(url)
@@ -136,7 +141,7 @@ async def scan_endpoint():
 
     # --- STEP 3: SYNTHESIS ---
     final_response = ai_result
-    final_response["competitors"] = competitor_data
+    final_response["competitors"] = competitor_data if competitor_data else []
     final_response["history"] = history_data
     final_response["current_price"] = current_price  # Send current price to frontend
     
@@ -153,7 +158,7 @@ async def scan_endpoint():
         final_response["reason"] += f" (Found on {best_deal['site']} for ₹{best_deal['price']:,})"
 
     print(f"✅ REPORT GENERATED: {final_response.get('verdict', 'UNKNOWN')}")
-    return jsonify(final_response)
+    return final_response
 
 
 async def run_ai_analysis(product_title: str):
@@ -206,5 +211,6 @@ async def run_ai_analysis(product_title: str):
 
 
 if __name__ == '__main__':
+    import uvicorn
     port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)

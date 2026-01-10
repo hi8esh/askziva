@@ -1,5 +1,5 @@
-flask
-flask-cors
+fastapi
+uvicorn
 google-generativeai
 python-dotenv
 playwright
@@ -7,4 +7,3 @@ playwright-stealth
 thefuzz
 requests
 beautifulsoup4
-gunicorn
