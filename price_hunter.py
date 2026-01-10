@@ -8,13 +8,10 @@ class PriceHunter:
         try:
             print(f"🕵️‍♂️ Scanning Flipkart for '{query}'...")
             await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=15000)
-            print("✅ Flipkart: Page loaded")
             
             try:
                 await page.wait_for_selector('div.RG5Slk, div.KzDlHZ, div._4rR01T, a.s1Q9rs', timeout=5000)
-                print("✅ Flipkart: Product cards detected")
-            except Exception as e:
-                print(f"⚠️ Flipkart: No product cards found: {e}")
+            except: pass
 
             products = await page.eval_on_selector_all('div[data-id], div._1AtVbE', """
                 elements => elements.map(el => {
@@ -27,28 +24,16 @@ class PriceHunter:
                     return null;
                 }).filter(item => item !== null)
             """)
-            
-            print(f"📊 Flipkart: Found {len(products)} products")
 
-            for idx, item in enumerate(products, 1):
+            for item in products:
                 try:
                     price_clean = int(item['price'].replace("₹", "").replace(",", "").split(" ")[0].strip())
-                    match_score = fuzz.partial_ratio(query.lower(), item['title'].lower())
-                    print(f"  [{idx}] Match: {match_score}% | {item['title'][:50]}... @ ₹{price_clean}")
-                    
-                    if match_score > 60:
+                    if fuzz.partial_ratio(query.lower(), item['title'].lower()) > 60:
                         full_link = "https://www.flipkart.com" + item['link'] if item['link'] and not item['link'].startswith("http") else item['link']
-                        print(f"✅ Flipkart MATCH: {item['title'][:50]}... @ ₹{price_clean}")
                         return {"site": "Flipkart", "title": item['title'], "price": price_clean, "link": full_link}
-                except Exception as e:
-                    print(f"  ⚠️ Parse error on item {idx}: {e}")
-                    continue 
-            
-            print("❌ Flipkart: No matches above 60% threshold")
+                except: continue 
             return None
-        except Exception as e:
-            print(f"❌ Flipkart Error: {e}")
-            return None
+        except: return None
 
     # --- AGENT 2: CROMA (Popup Killer Edition) ---
     async def search_croma(self, page, query):
@@ -129,7 +114,7 @@ class PriceHunter:
         results = []
         
         async with async_playwright() as p:
-            # STEALTH MODE - WITH DOCKER/RENDER FLAGS
+            # STEALTH MODE + Docker/Render flags
             browser = await p.chromium.launch(
                 headless=True,
                 args=['--no-sandbox', '--disable-dev-shm-usage']
@@ -145,13 +130,11 @@ class PriceHunter:
             task1 = self.search_flipkart(page1, clean_query)
             task2 = self.search_croma(page2, clean_query)
             
-            res1, res2 = await asyncio.gather(task1, task2, return_exceptions=True)
+            res1, res2 = await asyncio.gather(task1, task2)
             await browser.close()
             
-            if res1 and not isinstance(res1, Exception): 
-                results.append(res1)
-            if res2 and not isinstance(res2, Exception): 
-                results.append(res2)
+            if res1: results.append(res1)
+            if res2: results.append(res2)
             
         return results
 
