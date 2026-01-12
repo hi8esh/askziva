@@ -37,10 +37,17 @@ async function scanLink() {
         if (data.verdict && data.verdict.includes("HIGH RISK")) color = "#f85149"; // Red
         const icon = (data.verdict && data.verdict.includes("SAFE")) ? "✅" : "⚠️";
 
-        // Get current price from backend
-        const currentPrice = data.current_price || 0;
-
         // --- BUILD RESPONSE WITH HISTORY AND MARKET DATA ---
+        // Get current price from backend
+        let currentPrice = data.current_price || 0;
+
+        // NEW: If Current Price is still 0 (Search Mode), grab the cheapest competitor
+        if (currentPrice === 0 && data.competitors && data.competitors.length > 0) {
+             // Find lowest price in competitors array
+             const cheapest = data.competitors.reduce((prev, curr) => prev.price < curr.price ? prev : curr);
+             currentPrice = cheapest.price;
+        }
+    
         let historyHtml = "";
         if (data.history && data.history.lowest) {
             let lowest = data.history.lowest;

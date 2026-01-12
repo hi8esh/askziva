@@ -129,80 +129,75 @@ def home():
 
 @app.post("/scan")
 async def scan_endpoint(request_data: dict):
-    """Main API endpoint for URL scanning"""
+    """Smart Endpoint: Handles both Amazon URLs and Direct Search Queries"""
     if 'url' not in request_data:
-        return {"error": "No URL provided"}
+        return {"error": "No query provided"}
     
-    url = request_data['url']
+    user_input = request_data['url'].strip() # Frontend sends everything as 'url' key
     
-    # Extract product title, current price, and review count from URL
-    product_title, current_price, review_count = extract_product_title(url)
-    print(f"\n🔎 STARTING INVESTIGATION: {product_title} | Current Price: ₹{current_price} | Reviews: {review_count}")
+    # --- LOGIC SWITCH ---
+    if "http" in user_input or "www." in user_input:
+        # PATH A: It is a URL (Phase 1 Link Scanner)
+        print(f"🔗 URL DETECTED: Scanning specific page...")
+        product_title, current_price, review_count = extract_product_title(user_input)
+    else:
+        # PATH B: It is a Search Query (Phase 2 Universal Agent)
+        print(f"🔍 SEARCH QUERY DETECTED: '{user_input}'")
+        product_title = user_input
+        current_price = 0 # We will find the price from competitors
+        review_count = 0
     
-    # --- STEP 1: PARALLEL EXECUTION ---
-    # We launch 3 tasks: AI Analysis, Price Hunt, History Hunt
+    print(f"🧠 ANALYZING: {product_title}")
     
-    # Task A: AI
+    # --- EXECUTION (Parallel) ---
+    # 1. AI Analysis
     ai_task = asyncio.create_task(run_ai_analysis(product_title, review_count))
     
-    # Task B: Market Scanner (Flipkart, Croma)
+    # 2. Market Hunt (Finds the product on Flipkart/Croma)
     hunter_task = None
     if PriceHunter:
         hunter = PriceHunter()
         hunter_task = asyncio.create_task(hunter.hunt(product_title))
 
-    # Task C: Price History
+    # 3. History Check
     history_task = None
     if HistoryHunter:
         historian = HistoryHunter()
         history_task = asyncio.create_task(historian.get_history(product_title))
     
-    # --- STEP 2: GATHER RESULTS ---
-    # We wait for AI (Critical)
+    # Wait for results
     ai_result = await ai_task
     
-    # We wait for others (Optional)
     competitor_data = []
     if hunter_task:
         try:
             competitor_data = await asyncio.wait_for(hunter_task, timeout=40)
-        except asyncio.TimeoutError:
-            print(f"⚠️ TIMEOUT: Market Scanner took too long (>40s)")
-            competitor_data = []
         except Exception as e:
-            print(f"❌ Market Scanner Error: {e}")
+            print(f"⚠️ Hunter Error: {e}")
             competitor_data = []
         
     history_data = None
     if history_task:
         try:
             history_data = await asyncio.wait_for(history_task, timeout=40)
-        except asyncio.TimeoutError:
-            print(f"⚠️ TIMEOUT: Price History took too long (>40s)")
-            history_data = None
         except Exception as e:
-            print(f"❌ Price History Error: {e}")
-            history_data = None
+            print(f"⚠️ History Error: {e}")
 
-    # --- STEP 3: SYNTHESIS ---
+    # --- SYNTHESIS ---
     final_response = ai_result
     final_response["competitors"] = competitor_data if competitor_data else []
     final_response["history"] = history_data
-    final_response["current_price"] = current_price  # Send current price to frontend
+    final_response["current_price"] = current_price
     
-    # Logic: Check for savings
-    if competitor_data:
+    # If we searched (Price=0), pick the lowest competitor price as 'Current Price'
+    if current_price == 0 and competitor_data:
         best_deal = min(competitor_data, key=lambda x: x['price'])
-        
+        final_response["current_price"] = best_deal['price']
         final_response["market_intel"] = {
             "best_price": best_deal['price'],
-            "best_site": best_deal['site'],
-            "link": best_deal['link']
+            "best_site": best_deal['site']
         }
-        # Add alert to reason text
-        final_response["reason"] += f" (Found on {best_deal['site']} for ₹{best_deal['price']:,})"
 
-    print(f"✅ REPORT GENERATED: {final_response.get('verdict', 'UNKNOWN')}")
     return final_response
 
 
