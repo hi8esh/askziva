@@ -5,33 +5,33 @@ import re
 class HistoryHunter:
     async def get_history(self, query):
         print(f"📉 History: Checking '{query}'...")
-        clean_query = query.split("(")[0].strip()
+        clean_query = query.split("(")[0].split("|")[0].strip()
         
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=['--no-sandbox', '--disable-dev-shm-usage']
+                args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
             )
             page = await browser.new_page()
             
+            # BLOCK IMAGES
+            await page.route("**/*", lambda route: route.abort() 
+                if route.request.resource_type in ["image", "media", "font"] 
+                else route.continue_())
+
             try:
-                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=25000)
+                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=25000, wait_until="domcontentloaded")
                 
                 # Click first result
                 try:
-                    await page.click('a[href*="/product/"]', timeout=8000)
+                    await page.click('a[href*="/product/"]', timeout=5000)
                 except:
-                    print("❌ History: Product not found")
                     await browser.close()
                     return None
 
-                # Wait for text
                 await page.wait_for_load_state('domcontentloaded')
-                
-                # Extract text
                 text_content = await page.evaluate("document.body.innerText")
                 
-                # Regex search for prices
                 lowest = re.search(r'Lowest Price.*?₹([\d,]+)', text_content, re.IGNORECASE)
                 average = re.search(r'Average Price.*?₹([\d,]+)', text_content, re.IGNORECASE)
                 

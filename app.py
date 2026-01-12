@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from playwright.async_api import async_playwright
 
-# --- IMPORTS ---
 try:
     from price_hunter import PriceHunter
 except:
@@ -21,7 +20,6 @@ except:
 load_dotenv()
 
 app = FastAPI(title="ZIVA: Commerce Intelligence Engine")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,70 +27,63 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# AI Setup
 api_key = os.getenv("GEMINI_API_KEY")
 model = None
 if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('models/gemini-1.5-pro')
 
-# --- ROBUST PAGE SCRAPER (Replaces 'requests') ---
+# --- LIGHTWEIGHT URL SCRAPER ---
 async def scrape_product_page(url):
-    """Uses Playwright to reliably extract Title, Price, and Reviews from Amazon/Flipkart URLs."""
     print(f"🕵️‍♂️ Deep Scanning URL: {url}")
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
-            args=['--no-sandbox', '--disable-dev-shm-usage']
+            args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
         )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
         
+        # BLOCK IMAGES TO LOAD FAST
+        await page.route("**/*", lambda route: route.abort() 
+            if route.request.resource_type in ["image", "media", "font"] 
+            else route.continue_())
+        
         try:
-            await page.goto(url, timeout=40000)
+            # wait_until="domcontentloaded" is 10x faster than "load"
+            await page.goto(url, timeout=25000, wait_until="domcontentloaded")
             
-            # Extract Data
             data = await page.evaluate("""() => {
                 let title = "";
                 let price = 0;
                 let reviews = 0;
 
-                // AMAZON SELECTORS
+                // AMAZON
                 if (document.location.hostname.includes('amazon')) {
                     const titleEl = document.querySelector('#productTitle');
                     if (titleEl) title = titleEl.innerText.trim();
                     
                     const priceEl = document.querySelector('.a-price-whole');
-                    if (priceEl) {
-                        price = parseInt(priceEl.innerText.replace(/[^0-9]/g, ''));
-                    }
+                    if (priceEl) price = parseInt(priceEl.innerText.replace(/[^0-9]/g, ''));
                     
                     const reviewEl = document.querySelector('#acrCustomerReviewText');
-                    if (reviewEl) {
-                        reviews = parseInt(reviewEl.innerText.split(' ')[0].replace(/,/g, ''));
-                    }
+                    if (reviewEl) reviews = parseInt(reviewEl.innerText.split(' ')[0].replace(/,/g, ''));
                 }
                 
-                // FLIPKART SELECTORS
+                // FLIPKART
                 else if (document.location.hostname.includes('flipkart')) {
                     const titleEl = document.querySelector('.B_NuCI, .VU-ZEz');
                     if (titleEl) title = titleEl.innerText.trim();
                     
                     const priceEl = document.querySelector('div._30jeq3._16Jk6d, div.Nx9bqj.CxhGGd');
-                    if (priceEl) {
-                        price = parseInt(priceEl.innerText.replace(/[^0-9]/g, ''));
-                    }
+                    if (priceEl) price = parseInt(priceEl.innerText.replace(/[^0-9]/g, ''));
                     
                     const reviewEl = document.querySelector('span._2_R_DZ');
-                    if (reviewEl) {
-                        // Extract number from "1,234 ratings & 50 reviews"
-                        reviews = parseInt(reviewEl.innerText.split('&')[0].replace(/[^0-9]/g, ''));
-                    }
+                    if (reviewEl) reviews = parseInt(reviewEl.innerText.split('&')[0].replace(/[^0-9]/g, ''));
                 }
-
                 return { title, price, reviews };
             }""")
             
@@ -112,7 +103,6 @@ async def scrape_product_page(url):
 async def run_ai_analysis(title, reviews, price):
     if not model: return {"verdict": "UNKNOWN", "score": 50, "reason": "AI Offline"}
     
-    # Logic: High reviews = Safe
     if reviews > 500:
         return {"verdict": "SAFE", "score": 95, "reason": f"Product has {reviews:,} verified reviews. Community approved."}
         
@@ -133,18 +123,16 @@ async def scan_endpoint(request_data: dict):
     if 'url' not in request_data: return {"error": "No input"}
     user_input = request_data['url'].strip()
     
-    # 1. IDENTIFY INPUT TYPE
+    # LOGIC SWITCH
     if "http" in user_input or "www." in user_input:
-        # URL MODE: Deep Scrape
         product_title, current_price, review_count = await scrape_product_page(user_input)
     else:
-        # SEARCH MODE: Just use the text
         print(f"🔍 Search Query: {user_input}")
         product_title = user_input
         current_price = 0
         review_count = 0
 
-    # 2. RUN INTELLIGENCE LAYERS
+    # EXECUTION
     ai_task = asyncio.create_task(run_ai_analysis(product_title, review_count, current_price))
     
     hunter_task = None
@@ -157,19 +145,21 @@ async def scan_endpoint(request_data: dict):
         historian = HistoryHunter()
         history_task = asyncio.create_task(historian.get_history(product_title))
 
-    # 3. GATHER RESULTS
     ai_result = await ai_task
     
     competitors = []
     if hunter_task:
-        competitors = await hunter_task
+        try:
+            competitors = await asyncio.wait_for(hunter_task, timeout=35)
+        except: pass
         
     history = None
     if history_task:
-        history = await history_task
+        try:
+            history = await asyncio.wait_for(history_task, timeout=35)
+        except: pass
 
-    # 4. SEARCH MODE PRICE FIX
-    # If user searched by name, we don't have a 'current_price'. Pick the best one found.
+    # If Search Mode, pick best price as current
     if current_price == 0 and competitors:
         best_deal = min(competitors, key=lambda x: x['price'])
         current_price = best_deal['price']
