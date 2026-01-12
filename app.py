@@ -1,6 +1,8 @@
 import os
 import json
 import asyncio
+import requests
+from bs4 import BeautifulSoup
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -33,106 +35,55 @@ if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('models/gemini-1.5-pro')
 
-# --- SAFE ROUTE HANDLER ---
-async def safe_route_handler(route):
-    try:
-        # Block only heavy media, allow scripts for functionality
-        if route.request.resource_type in ["image", "media", "font"]:
-            await route.abort()
-        else:
-            await route.continue_()
-    except:
-        pass
-
-# --- LIGHTWEIGHT URL SCRAPER ---
+# --- URL SCRAPER ---
 async def scrape_product_page(url):
     print(f"🕵️‍♂️ Deep Scanning URL: {url}")
-    
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
-        )
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-        
-        # Use Safe Handler
-        await page.route("**/*", safe_route_handler)
-        
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        page = await browser.new_page()
         try:
-            # 40s timeout for Render
-            await page.goto(url, timeout=40000, wait_until="domcontentloaded")
-            
+            await page.goto(url, timeout=30000, wait_until="domcontentloaded")
             data = await page.evaluate("""() => {
-                let title = "";
-                let price = 0;
-                let reviews = 0;
-
-                // AMAZON
+                let title = "", price = 0, reviews = 0;
                 if (document.location.hostname.includes('amazon')) {
-                    const titleEl = document.querySelector('#productTitle');
-                    if (titleEl) title = titleEl.innerText.trim();
-                    
-                    const priceEl = document.querySelector('.a-price-whole');
-                    if (priceEl) price = parseInt(priceEl.innerText.replace(/[^0-9]/g, ''));
-                    
-                    const reviewEl = document.querySelector('#acrCustomerReviewText');
-                    if (reviewEl) reviews = parseInt(reviewEl.innerText.split(' ')[0].replace(/,/g, ''));
-                }
-                
-                // FLIPKART
-                else if (document.location.hostname.includes('flipkart')) {
-                    const titleEl = document.querySelector('.B_NuCI, .VU-ZEz');
-                    if (titleEl) title = titleEl.innerText.trim();
-                    
-                    const priceEl = document.querySelector('div._30jeq3._16Jk6d, div.Nx9bqj.CxhGGd');
-                    if (priceEl) price = parseInt(priceEl.innerText.replace(/[^0-9]/g, ''));
-                    
-                    const reviewEl = document.querySelector('span._2_R_DZ');
-                    if (reviewEl) reviews = parseInt(reviewEl.innerText.split('&')[0].replace(/[^0-9]/g, ''));
+                    title = document.querySelector('#productTitle')?.innerText.trim();
+                    const p = document.querySelector('.a-price-whole');
+                    if(p) price = parseInt(p.innerText.replace(/[^0-9]/g, ''));
+                    const r = document.querySelector('#acrCustomerReviewText');
+                    if(r) reviews = parseInt(r.innerText.split(' ')[0].replace(/,/g, ''));
+                } else if (document.location.hostname.includes('flipkart')) {
+                    title = document.querySelector('.B_NuCI, .VU-ZEz')?.innerText.trim();
+                    const p = document.querySelector('div._30jeq3._16Jk6d, div.Nx9bqj.CxhGGd');
+                    if(p) price = parseInt(p.innerText.replace(/[^0-9]/g, ''));
+                    const r = document.querySelector('span._2_R_DZ');
+                    if(r) reviews = parseInt(r.innerText.split('&')[0].replace(/[^0-9]/g, ''));
                 }
                 return { title, price, reviews };
             }""")
-            
             await browser.close()
-            
-            if not data['title']:
-                return "Unknown Product", 0, 0
-                
-            print(f"✅ Extracted: {data['title'][:30]}... | ₹{data['price']} | {data['reviews']} reviews")
             return data['title'], data['price'], data['reviews']
-
         except Exception as e:
-            print(f"❌ Scraping Error: {e}")
+            print(f"❌ Scrape Error: {e}")
             await browser.close()
             return "Unknown Product", 0, 0
 
 async def run_ai_analysis(title, reviews, price):
     if not model: return {"verdict": "UNKNOWN", "score": 50, "reason": "AI Offline"}
-    
-    if reviews > 500:
-        return {"verdict": "SAFE", "score": 95, "reason": f"Product has {reviews:,} verified reviews. Community approved."}
-        
-    prompt = f"""
-    Analyze this product for scams: "{title}" priced at ₹{price}.
-    Verdict (SAFE/SUSPICIOUS) | Reason
-    """
+    if reviews > 500: return {"verdict": "SAFE", "score": 95, "reason": f"Product has {reviews:,} reviews."}
+    prompt = f"Analyze for scams: '{title}' price ₹{price}. Verdict (SAFE/SUSPICIOUS) | Reason"
     try:
         response = await asyncio.to_thread(model.generate_content, prompt)
         text = response.text.strip()
         parts = text.split("|", 1)
         return {"verdict": parts[0].strip(), "score": 80, "reason": parts[1].strip() if len(parts)>1 else text}
     except:
-        return {"verdict": "SAFE", "score": 80, "reason": "AI Analysis standard check passed."}
+        return {"verdict": "SAFE", "score": 80, "reason": "Standard check passed."}
 
 @app.post("/scan")
 async def scan_endpoint(request_data: dict):
     if 'url' not in request_data: return {"error": "No input"}
     user_input = request_data['url'].strip()
     
-    # LOGIC SWITCH
     if "http" in user_input or "www." in user_input:
         product_title, current_price, review_count = await scrape_product_page(user_input)
     else:
@@ -141,7 +92,6 @@ async def scan_endpoint(request_data: dict):
         current_price = 0
         review_count = 0
 
-    # EXECUTION
     ai_task = asyncio.create_task(run_ai_analysis(product_title, review_count, current_price))
     
     hunter_task = None
@@ -158,21 +108,17 @@ async def scan_endpoint(request_data: dict):
     
     competitors = []
     if hunter_task:
-        try:
-            # Increased wait time for slow Render instances
-            competitors = await asyncio.wait_for(hunter_task, timeout=45)
+        try: competitors = await asyncio.wait_for(hunter_task, timeout=40)
         except: pass
         
     history = None
     if history_task:
-        try:
-            history = await asyncio.wait_for(history_task, timeout=45)
+        try: history = await asyncio.wait_for(history_task, timeout=40)
         except: pass
 
     if current_price == 0 and competitors:
         best_deal = min(competitors, key=lambda x: x['price'])
         current_price = best_deal['price']
-        ai_result['reason'] += f" Best price found on {best_deal['site']}."
 
     response = ai_result
     response["product"] = product_title
