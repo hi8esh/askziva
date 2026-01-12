@@ -8,13 +8,10 @@ class PriceHunter:
         try:
             print(f"🕵️‍♂️ Scanning Flipkart for '{query}'...")
             await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=30000)
-            print("✅ Flipkart: Page loaded")
             
             try:
                 await page.wait_for_selector('div.RG5Slk, div.KzDlHZ, div._4rR01T, a.s1Q9rs', timeout=10000)
-                print("✅ Flipkart: Product cards found")
-            except Exception as e:
-                print(f"⚠️ Flipkart: No product cards - {e}")
+            except: pass
 
             products = await page.eval_on_selector_all('div[data-id], div._1AtVbE', """
                 elements => elements.map(el => {
@@ -27,85 +24,45 @@ class PriceHunter:
                     return null;
                 }).filter(item => item !== null)
             """)
-            
-            print(f"📊 Flipkart: Extracted {len(products)} products")
 
             for item in products:
                 try:
                     price_clean = int(item['price'].replace("₹", "").replace(",", "").split(" ")[0].strip())
-                    match_score = fuzz.partial_ratio(query.lower(), item['title'].lower())
-                    if match_score > 60:
+                    if fuzz.partial_ratio(query.lower(), item['title'].lower()) > 60:
                         full_link = "https://www.flipkart.com" + item['link'] if item['link'] and not item['link'].startswith("http") else item['link']
-                        print(f"✅ Flipkart MATCH: {item['title'][:50]}... @ ₹{price_clean} (score: {match_score}%)")
                         return {"site": "Flipkart", "title": item['title'], "price": price_clean, "link": full_link}
-                except Exception as e:
-                    continue 
-            print("❌ Flipkart: No matches above 60% threshold")
+                except: continue 
             return None
         except Exception as e:
             print(f"❌ Flipkart Error: {e}")
             return None
 
-    # --- AGENT 2: CROMA (Popup Killer Edition) ---
+    # --- AGENT 2: CROMA ---
     async def search_croma(self, page, query):
         try:
             print(f"🕵️‍♂️ Scanning Croma for '{query}'...")
-            await page.goto("https://www.croma.com/", timeout=30000)
-            print("✅ Croma: Homepage loaded")
+            # Croma search structure
+            await page.goto(f"https://www.croma.com/searchB?q={query}%20", timeout=30000)
             
-            # 1. POPUP KILLER & WAITER
             try:
-                # Wait for page to settle
-                await page.wait_for_load_state('domcontentloaded')
-                # Press ESCAPE to close "Select Pincode" or "Login" popups
+                # Handle Croma's Location Popup if it appears
                 await page.keyboard.press("Escape")
-                await asyncio.sleep(2) 
             except: pass
 
-            # 2. FIND SEARCH BAR (The "Dumb" Strategy)
-            # We look for ANY visible text input. The search bar is usually the first one in the header.
             try:
-                # Selector: Find any input that is text or search type
-                search_input = await page.wait_for_selector('input[type="text"], input[type="search"]', state="visible", timeout=20000)
-                print("✅ Croma: Search bar found")
-                
-                if search_input:
-                    await search_input.click()
-                    await search_input.fill(query)
-                    await search_input.press("Enter")
-                    print("✅ Croma: Search query submitted.")
-                else:
-                    print("❌ Croma: No search bar found.")
-                    return None
-
-                # 3. WAIT FOR RESULTS
-                # Increased timeout to 20s because Croma is slow on Render
-                await page.wait_for_selector('li.product-item, div.product-item, div.cp-product-box', timeout=20000)
-                print("✅ Croma: Results loaded")
-                
-            except Exception as e:
-                print(f"❌ Croma Navigation Failed: {e}")
+                await page.wait_for_selector('li.product-item, div.product-item', timeout=15000)
+            except: 
                 return None
 
-            # 4. SCRAPE DATA
             data = await page.evaluate("""() => {
                 const card = document.querySelector('li.product-item, div.product-item, div.cp-product-box');
                 if (!card) return null;
                 
-                let title = card.querySelector('h3.product-title, h3 a, .product-title a');
+                const title = card.querySelector('h3.product-title, h3 a')?.innerText;
+                const price = card.querySelector('.amount, .new-price')?.innerText;
+                const link = card.querySelector('h3 a')?.getAttribute('href');
                 
-                let price = card.querySelector('.amount');
-                if (!price) price = card.querySelector('.new-price');
-                if (!price) price = card.querySelector('.cp-price');
-
-                let link = card.querySelector('a');
-                if (title && title.tagName === 'A') link = title;
-
-                return { 
-                    title: title ? title.innerText : null, 
-                    price: price ? price.innerText : null, 
-                    link: link ? link.getAttribute('href') : null 
-                };
+                return { title, price, link };
             }""")
 
             if data and data['title'] and data['price']:
@@ -113,13 +70,48 @@ class PriceHunter:
                 price_clean = int(float(raw_price))
                 full_link = "https://www.croma.com" + data['link'] if not data['link'].startswith("http") else data['link']
                 
-                print(f"✅ Found on Croma: {data['title']} @ ₹{price_clean}")
-                return {"site": "Croma", "title": data['title'], "price": price_clean, "link": full_link}
-            
-            print("❌ Croma: Results loaded but scraper couldn't read data.")
+                if fuzz.partial_ratio(query.lower(), data['title'].lower()) > 50:
+                    return {"site": "Croma", "title": data['title'], "price": price_clean, "link": full_link}
             return None
         except Exception as e:
             print(f"❌ Croma Error: {e}")
+            return None
+
+    # --- AGENT 3: AMAZON (NEW) ---
+    async def search_amazon(self, page, query):
+        try:
+            print(f"🕵️‍♂️ Scanning Amazon for '{query}'...")
+            await page.goto(f"https://www.amazon.in/s?k={query}", timeout=30000)
+            
+            try:
+                await page.wait_for_selector('div.s-result-item', timeout=10000)
+            except: return None
+
+            data = await page.evaluate("""() => {
+                const results = document.querySelectorAll('div.s-result-item[data-component-type="s-search-result"]');
+                for (let card of results) {
+                    const titleEl = card.querySelector('h2 a span');
+                    const priceEl = card.querySelector('.a-price-whole');
+                    const linkEl = card.querySelector('h2 a');
+                    
+                    if (titleEl && priceEl) {
+                        return {
+                            title: titleEl.innerText,
+                            price: priceEl.innerText,
+                            link: linkEl.getAttribute('href')
+                        };
+                    }
+                }
+                return null;
+            }""")
+
+            if data:
+                price_clean = int(data['price'].replace(",", "").replace(".", "").strip())
+                full_link = "https://www.amazon.in" + data['link'] if not data['link'].startswith("http") else data['link']
+                return {"site": "Amazon", "title": data['title'], "price": price_clean, "link": full_link}
+            return None
+        except Exception as e:
+            print(f"❌ Amazon Error: {e}")
             return None
 
     # --- THE MANAGER ---
@@ -128,30 +120,31 @@ class PriceHunter:
         results = []
         
         async with async_playwright() as p:
-            # STEALTH MODE + Docker/Render flags
             browser = await p.chromium.launch(
                 headless=True,
                 args=['--no-sandbox', '--disable-dev-shm-usage']
             )
             context = await browser.new_context(
-                # Real User Agent is critical for Croma
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             
+            # Create pages for all agents
             page1 = await context.new_page()
             page2 = await context.new_page()
+            page3 = await context.new_page()
             
+            # Run all searches in parallel
             task1 = self.search_flipkart(page1, clean_query)
             task2 = self.search_croma(page2, clean_query)
+            task3 = self.search_amazon(page3, clean_query)
             
-            res1, res2 = await asyncio.gather(task1, task2)
+            # Gather results
+            fetched_results = await asyncio.gather(task1, task2, task3)
+            
             await browser.close()
             
-            if res1: results.append(res1)
-            if res2: results.append(res2)
+            # Filter None values
+            for res in fetched_results:
+                if res: results.append(res)
             
         return results
-
-if __name__ == "__main__":
-    hunter = PriceHunter()
-    print(asyncio.run(hunter.hunt("OnePlus 13R")))
