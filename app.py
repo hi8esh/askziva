@@ -1,5 +1,4 @@
 import os
-import json
 import asyncio
 import re
 from fastapi import FastAPI
@@ -37,7 +36,7 @@ api_key = os.getenv("GEMINI_API_KEY")
 model = None
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('models/gemini-1.5-pro')
+    model = genai.GenerativeModel('models/gemma-3-27b-it')
 
 def clean_title_for_search(title):
     """

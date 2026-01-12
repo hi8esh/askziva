@@ -25,7 +25,6 @@ class HistoryHunter:
                 
                 # 2. FIND PRODUCT LINK (More robust selector)
                 try:
-                    # Click the first meaningful result (usually inside a content div)
                     await page.wait_for_selector('a[href*="/product/"]', timeout=8000)
                     await page.click('a[href*="/product/"]', timeout=5000)
                 except:

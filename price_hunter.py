@@ -12,7 +12,7 @@ class PriceHunter:
         try:
             print(f"🕵️‍♂️ Scanning Flipkart for '{query}'...")
             await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=20000, wait_until="domcontentloaded")
-            await page.wait_for_timeout(1000) # Small wait for dynamic content
+            await page.wait_for_timeout(1000)
 
             products = await page.eval_on_selector_all('div[data-id], div._1AtVbE', """
                 elements => elements.map(el => {
@@ -29,7 +29,6 @@ class PriceHunter:
             for item in products:
                 try:
                     price_clean = int(item['price'].replace("₹", "").replace(",", "").split(" ")[0].strip())
-                    # Fuzzy match > 50% to ensure relevance
                     if fuzz.partial_ratio(query.lower(), item['title'].lower()) > 50:
                         full_link = "https://www.flipkart.com" + item['link'] if item['link'] and not item['link'].startswith("http") else item['link']
                         return {"site": "Flipkart", "title": item['title'], "price": price_clean, "link": full_link}
@@ -61,6 +60,28 @@ class PriceHunter:
             return None
         except: return None
 
+    async def search_amazon(self, page, query):
+        try:
+            print(f"🕵️‍♂️ Scanning Amazon for '{query}'...")
+            await page.goto(f"https://www.amazon.in/s?k={query}", timeout=20000, wait_until="domcontentloaded")
+            await page.wait_for_timeout(1500)
+
+            data = await page.evaluate("""() => {
+                const card = document.querySelector('div[data-component-type="s-search-result"]');
+                if (!card) return null;
+                const title = card.querySelector('h2 a span')?.innerText;
+                const price = card.querySelector('.a-price-whole')?.innerText;
+                const link = card.querySelector('h2 a')?.getAttribute('href');
+                return { title, price, link };
+            }""")
+
+            if data and data['title'] and data['price']:
+                price_clean = int(data['price'].replace(",", "").replace(".", "").strip())
+                full_link = "https://www.amazon.in" + data['link'] if not data['link'].startswith("http") else data['link']
+                return {"site": "Amazon", "title": data['title'], "price": price_clean, "link": full_link}
+            return None
+        except: return None
+
     async def hunt(self, clean_query):
         results = []
         async with async_playwright() as p:
@@ -69,19 +90,21 @@ class PriceHunter:
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             
-            page1 = await context.new_page()
-            page2 = await context.new_page()
-            await stealth_fn(page1)
-            await stealth_fn(page2)
+            # Create pages
+            pages = [await context.new_page() for _ in range(3)]
+            for pg in pages: await stealth_fn(pg)
             
-            # Run tasks
-            task1 = self.search_flipkart(page1, clean_query)
-            task2 = self.search_croma(page2, clean_query)
+            # Run tasks in parallel
+            tasks = [
+                self.search_flipkart(pages[0], clean_query),
+                self.search_croma(pages[1], clean_query),
+                self.search_amazon(pages[2], clean_query) 
+            ]
             
-            res1, res2 = await asyncio.gather(task1, task2)
+            res_list = await asyncio.gather(*tasks)
             await browser.close()
             
-            if res1: results.append(res1)
-            if res2: results.append(res2)
+            for res in res_list:
+                if res: results.append(res)
             
         return results
