@@ -53,28 +53,46 @@ async def scrape_product_data(url):
         page = await context.new_page()
         await stealth_fn(page)
         
-        # BLOCK ASSETS FOR SPEED
+        # BLOCK HEAVY ASSETS (Images/Fonts) -> Speed + Stability
         await page.route("**/*", lambda route: route.abort() 
             if route.request.resource_type in ["image", "stylesheet", "font", "media"] 
             else route.continue_())
         
         try:
+            # Wait for HTML commit (Fastest)
             await page.goto(url, timeout=30000, wait_until="commit")
-            # Wait for text to appear
             try: await page.wait_for_selector('body', timeout=5000) 
             except: pass
             
             data = await page.evaluate("""() => {
-                let title = document.querySelector('#productTitle')?.innerText.trim() || 
-                            document.querySelector('.B_NuCI, .VU-ZEz')?.innerText.trim() || "";
+                // STRATEGY 1: META TAGS (Most Reliable for Cloud IPs)
+                let title = document.querySelector('meta[property="og:title"]')?.content || 
+                            document.querySelector('meta[name="title"]')?.content;
+
+                // STRATEGY 2: VISIBLE ELEMENTS (Fallback)
+                if (!title) {
+                    title = document.querySelector('#productTitle')?.innerText.trim() || 
+                            document.querySelector('h1')?.innerText.trim() || 
+                            document.title; 
+                }
+
+                // PRICE EXTRACTION
                 let price = 0;
+                // Amazon
                 const p1 = document.querySelector('.a-price-whole');
                 if(p1) price = parseInt(p1.innerText.replace(/[^0-9]/g, ''));
-                const p2 = document.querySelector('div.Nx9bqj');
-                if(!price && p2) price = parseInt(p2.innerText.replace(/[^0-9]/g, ''));
+                
+                // Flipkart/General
+                if(!price) {
+                    const p2 = document.querySelector('div.Nx9bqj, div._30jeq3, .price');
+                    if(p2) price = parseInt(p2.innerText.replace(/[^0-9]/g, ''));
+                }
+
+                // REVIEWS EXTRACTION
                 let reviews = 0;
                 const r1 = document.querySelector('#acrCustomerReviewText');
                 if(r1) reviews = parseInt(r1.innerText.split(' ')[0].replace(/,/g, ''));
+                
                 return { title, price, reviews };
             }""")
             
@@ -88,13 +106,14 @@ async def scrape_product_data(url):
 async def run_ai_analysis(title, reviews, price):
     if not model: return {"verdict": "SAFE", "score": 80, "reason": "Standard verification passed."}
     
+    # Improved Prompt for better "Why"
     prompt = f"""
     Analyze product: "{title}" priced at ₹{price}.
     CONTEXT: Today is Jan 2026.
     
     Output format: 
     VERDICT: [SAFE or SUSPICIOUS]
-    REASON: [Short explanation]
+    REASON: [1 sentence explanation]
     """
     try:
         response = await asyncio.to_thread(model.generate_content, prompt)
@@ -117,6 +136,7 @@ async def scan_endpoint(request_data: dict):
     if 'url' not in request_data: return {"error": "No input"}
     user_input = request_data['url'].strip()
     
+    # 1. SCRAPE
     if "http" in user_input or "www." in user_input:
         product_title, current_price, review_count = await scrape_product_data(user_input)
         if not product_title: product_title = "Unknown Product"
@@ -127,16 +147,17 @@ async def scan_endpoint(request_data: dict):
         review_count = 0
 
     search_term = clean_title_for_search(product_title)
+    print(f"🧠 Analyzed: {search_term}")
     
     ai_task = asyncio.create_task(run_ai_analysis(product_title, review_count, current_price))
     
     hunter_task = None
-    if PriceHunter:
+    if PriceHunter and search_term != "Unknown Product":
         hunter = PriceHunter()
         hunter_task = asyncio.create_task(hunter.hunt(search_term))
 
     history_task = None
-    if HistoryHunter:
+    if HistoryHunter and search_term != "Unknown Product":
         historian = HistoryHunter()
         history_task = asyncio.create_task(historian.get_history(search_term))
 
