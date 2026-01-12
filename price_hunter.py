@@ -3,27 +3,31 @@ from playwright.async_api import async_playwright
 from thefuzz import fuzz
 
 class PriceHunter:
-    # --- HELPER: SPEED BOOSTER ---
+    # --- HELPER: SAFE OPTIMIZER ---
     async def _optimize_page(self, route):
-        """Blocks heavy resources to speed up page load by 10x."""
-        if route.request.resource_type in ["image", "stylesheet", "font", "media", "script"]:
-            await route.abort()
-        else:
-            await route.continue_()
+        """Blocks heavy resources safely. Ignores errors if page is already closed."""
+        try:
+            # Block images, fonts, media. 
+            # NOTE: We keep 'script' allowed because Flipkart/Croma need JS to render prices.
+            if route.request.resource_type in ["image", "stylesheet", "font", "media"]:
+                await route.abort()
+            else:
+                await route.continue_()
+        except Exception:
+            # If the page closes while we are checking, just do nothing.
+            pass
 
     # --- AGENT 1: FLIPKART ---
     async def search_flipkart(self, page, query):
         try:
-            # Block junk to load fast
             await page.route("**/*", self._optimize_page)
-            
             print(f"🕵️‍♂️ Scanning Flipkart for '{query}'...")
-            # Wait only for HTML (domcontentloaded), NOT full page
-            await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=25000, wait_until="domcontentloaded")
             
-            # Wait for any item to appear
+            # Increased timeout to 40s for Render
+            await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=40000, wait_until="domcontentloaded")
+            
             try:
-                await page.wait_for_selector('div._1AtVbE', timeout=5000)
+                await page.wait_for_selector('div._1AtVbE', timeout=10000)
             except: pass
 
             products = await page.eval_on_selector_all('div[data-id], div._1AtVbE', """
@@ -47,7 +51,7 @@ class PriceHunter:
                 except: continue 
             return None
         except Exception as e:
-            print(f"❌ Flipkart Error: {e}")
+            # Ignore timeout errors in logs
             return None
 
     # --- AGENT 2: CROMA ---
@@ -56,11 +60,10 @@ class PriceHunter:
             await page.route("**/*", self._optimize_page)
             print(f"🕵️‍♂️ Scanning Croma for '{query}'...")
             
-            await page.goto(f"https://www.croma.com/searchB?q={query}%20", timeout=25000, wait_until="domcontentloaded")
+            await page.goto(f"https://www.croma.com/searchB?q={query}%20", timeout=40000, wait_until="domcontentloaded")
             
             try:
-                # Croma is weird, sometimes needs a small wait
-                await page.wait_for_selector('li.product-item, div.product-item', timeout=5000)
+                await page.wait_for_selector('li.product-item, div.product-item', timeout=10000)
             except: 
                 return None
 
@@ -81,20 +84,19 @@ class PriceHunter:
                 if fuzz.partial_ratio(query.lower(), data['title'].lower()) > 50:
                     return {"site": "Croma", "title": data['title'], "price": price_clean, "link": full_link}
             return None
-        except Exception as e:
-            print(f"❌ Croma Error: {e}")
+        except Exception:
             return None
 
-    # --- AGENT 3: AMAZON (Scanner Mode) ---
+    # --- AGENT 3: AMAZON ---
     async def search_amazon(self, page, query):
         try:
             await page.route("**/*", self._optimize_page)
             print(f"🕵️‍♂️ Scanning Amazon for '{query}'...")
             
-            await page.goto(f"https://www.amazon.in/s?k={query}", timeout=25000, wait_until="domcontentloaded")
+            await page.goto(f"https://www.amazon.in/s?k={query}", timeout=40000, wait_until="domcontentloaded")
             
             try:
-                await page.wait_for_selector('div.s-result-item[data-component-type="s-search-result"]', timeout=5000)
+                await page.wait_for_selector('div.s-result-item[data-component-type="s-search-result"]', timeout=10000)
             except: return None
 
             data = await page.evaluate("""() => {
@@ -119,8 +121,7 @@ class PriceHunter:
                 full_link = "https://www.amazon.in" + data['link'] if not data['link'].startswith("http") else data['link']
                 return {"site": "Amazon", "title": data['title'], "price": price_clean, "link": full_link}
             return None
-        except Exception as e:
-            print(f"❌ Amazon Error: {e}")
+        except Exception:
             return None
 
     # --- THE MANAGER ---
@@ -129,7 +130,6 @@ class PriceHunter:
         results = []
         
         async with async_playwright() as p:
-            # Minimal Launch Args for Render
             browser = await p.chromium.launch(
                 headless=True,
                 args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
@@ -142,7 +142,6 @@ class PriceHunter:
             page2 = await context.new_page()
             page3 = await context.new_page()
             
-            # Parallel Execution
             t1 = self.search_flipkart(page1, clean_query)
             t2 = self.search_croma(page2, clean_query)
             t3 = self.search_amazon(page3, clean_query)

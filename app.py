@@ -33,6 +33,17 @@ if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('models/gemini-1.5-pro')
 
+# --- SAFE ROUTE HANDLER ---
+async def safe_route_handler(route):
+    try:
+        # Block only heavy media, allow scripts for functionality
+        if route.request.resource_type in ["image", "media", "font"]:
+            await route.abort()
+        else:
+            await route.continue_()
+    except:
+        pass
+
 # --- LIGHTWEIGHT URL SCRAPER ---
 async def scrape_product_page(url):
     print(f"🕵️‍♂️ Deep Scanning URL: {url}")
@@ -47,14 +58,12 @@ async def scrape_product_page(url):
         )
         page = await context.new_page()
         
-        # BLOCK IMAGES TO LOAD FAST
-        await page.route("**/*", lambda route: route.abort() 
-            if route.request.resource_type in ["image", "media", "font"] 
-            else route.continue_())
+        # Use Safe Handler
+        await page.route("**/*", safe_route_handler)
         
         try:
-            # wait_until="domcontentloaded" is 10x faster than "load"
-            await page.goto(url, timeout=25000, wait_until="domcontentloaded")
+            # 40s timeout for Render
+            await page.goto(url, timeout=40000, wait_until="domcontentloaded")
             
             data = await page.evaluate("""() => {
                 let title = "";
@@ -150,16 +159,16 @@ async def scan_endpoint(request_data: dict):
     competitors = []
     if hunter_task:
         try:
-            competitors = await asyncio.wait_for(hunter_task, timeout=35)
+            # Increased wait time for slow Render instances
+            competitors = await asyncio.wait_for(hunter_task, timeout=45)
         except: pass
         
     history = None
     if history_task:
         try:
-            history = await asyncio.wait_for(history_task, timeout=35)
+            history = await asyncio.wait_for(history_task, timeout=45)
         except: pass
 
-    # If Search Mode, pick best price as current
     if current_price == 0 and competitors:
         best_deal = min(competitors, key=lambda x: x['price'])
         current_price = best_deal['price']

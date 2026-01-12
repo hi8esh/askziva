@@ -14,17 +14,22 @@ class HistoryHunter:
             )
             page = await browser.new_page()
             
-            # BLOCK IMAGES
-            await page.route("**/*", lambda route: route.abort() 
-                if route.request.resource_type in ["image", "media", "font"] 
-                else route.continue_())
+            # Safe Handler
+            async def safe_handler(route):
+                try:
+                   if route.request.resource_type in ["image", "media", "font"]:
+                       await route.abort()
+                   else:
+                       await route.continue_()
+                except: pass
+
+            await page.route("**/*", safe_handler)
 
             try:
-                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=25000, wait_until="domcontentloaded")
+                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=40000, wait_until="domcontentloaded")
                 
-                # Click first result
                 try:
-                    await page.click('a[href*="/product/"]', timeout=5000)
+                    await page.click('a[href*="/product/"]', timeout=8000)
                 except:
                     await browser.close()
                     return None
@@ -41,7 +46,6 @@ class HistoryHunter:
                 await browser.close()
                 return {"lowest": l_price, "average": a_price}
 
-            except Exception as e:
-                print(f"❌ History Error: {e}")
+            except Exception:
                 await browser.close()
                 return None
