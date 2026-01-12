@@ -1,8 +1,6 @@
 import os
 import json
 import asyncio
-import requests
-from bs4 import BeautifulSoup
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -40,7 +38,22 @@ async def scrape_product_page(url):
     print(f"🕵️‍♂️ Deep Scanning URL: {url}")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
-        page = await browser.new_page()
+        context = await browser.new_context(
+             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        page = await context.new_page()
+        
+        # SAFE RESOURCE BLOCKER
+        async def route_handler(route):
+            try:
+                if route.request.resource_type in ["image", "media", "font"]:
+                    await route.abort()
+                else:
+                    await route.continue_()
+            except: pass # Swallow errors if browser closes
+            
+        await page.route("**/*", route_handler)
+
         try:
             await page.goto(url, timeout=30000, wait_until="domcontentloaded")
             data = await page.evaluate("""() => {
@@ -115,6 +128,10 @@ async def scan_endpoint(request_data: dict):
     if history_task:
         try: history = await asyncio.wait_for(history_task, timeout=40)
         except: pass
+
+    # Clean data (Filter errors)
+    if competitors and isinstance(competitors, list):
+        competitors = [c for c in competitors if isinstance(c, dict)]
 
     if current_price == 0 and competitors:
         best_deal = min(competitors, key=lambda x: x['price'])

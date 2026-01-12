@@ -1,40 +1,19 @@
 import asyncio
 from playwright.async_api import async_playwright
 from thefuzz import fuzz
-# Stealth import compatibility: normalize to a callable function
+# Stealth import compatibility
 try:
-    from playwright_stealth import stealth_async as stealth_fn  # v1 API
+    from playwright_stealth import stealth_async as stealth_fn
 except Exception:
-    try:
-        from playwright_stealth import stealth as stealth_fn  # v2 API may export a function or a module
-        if not callable(stealth_fn):
-            import playwright_stealth as _ps
-            if hasattr(_ps, "stealth_async") and callable(getattr(_ps, "stealth_async")):
-                async def stealth_fn(page):
-                    return await _ps.stealth_async(page)
-            elif hasattr(_ps, "stealth") and callable(getattr(_ps, "stealth")):
-                async def stealth_fn(page):
-                    return await _ps.stealth(page)
-            else:
-                async def stealth_fn(page):
-                    return
-    except Exception:
-        async def stealth_fn(page):
-            return
+    async def stealth_fn(page): pass
 
 class PriceHunter:
     # --- AGENT 1: FLIPKART ---
     async def search_flipkart(self, page, query):
         try:
             print(f"🕵️‍♂️ Scanning Flipkart for '{query}'...")
-            await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=30000, wait_until="domcontentloaded")
-            try:
-                await page.wait_for_load_state('networkidle', timeout=15000)
-            except: pass
-            
-            try:
-                await page.wait_for_selector('div._1AtVbE', timeout=10000)
-            except: pass
+            await page.goto(f"https://www.flipkart.com/search?q={query}", timeout=45000, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000) # Just wait 2s, don't look for selectors
 
             products = await page.eval_on_selector_all('div[data-id], div._1AtVbE', """
                 elements => elements.map(el => {
@@ -57,19 +36,14 @@ class PriceHunter:
                 except: continue 
             return None
         except Exception as e:
-            print(f"❌ Flipkart Error: {e}")
             return None
 
     # --- AGENT 2: CROMA ---
     async def search_croma(self, page, query):
         try:
             print(f"🕵️‍♂️ Scanning Croma for '{query}'...")
-            await page.goto(f"https://www.croma.com/searchB?q={query}%20", timeout=30000, wait_until="domcontentloaded")
-            
-            try:
-                await page.wait_for_selector('li.product-item, div.product-item', timeout=10000)
-            except: 
-                return None
+            await page.goto(f"https://www.croma.com/searchB?q={query}%20", timeout=45000, wait_until="domcontentloaded")
+            await page.wait_for_timeout(3000) # Croma is slow, give it 3s
 
             data = await page.evaluate("""() => {
                 const card = document.querySelector('li.product-item, div.product-item');
@@ -88,23 +62,19 @@ class PriceHunter:
                 if fuzz.partial_ratio(query.lower(), data['title'].lower()) > 50:
                     return {"site": "Croma", "title": data['title'], "price": price_clean, "link": full_link}
             return None
-        except Exception as e:
-            print(f"❌ Croma Error: {e}")
+        except Exception:
             return None
 
     # --- AGENT 3: AMAZON ---
     async def search_amazon(self, page, query):
         try:
             print(f"🕵️‍♂️ Scanning Amazon for '{query}'...")
-            await page.goto(f"https://www.amazon.in/s?k={query}", timeout=30000, wait_until="domcontentloaded")
-            
-            try:
-                # Wait for results or captcha
-                await page.wait_for_selector('div.s-result-item[data-component-type="s-search-result"]', timeout=10000)
-            except: return None
+            await page.goto(f"https://www.amazon.in/s?k={query}", timeout=45000, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2000) # Force wait
 
             data = await page.evaluate("""() => {
-                const results = document.querySelectorAll('div.s-result-item[data-component-type="s-search-result"]');
+                // Grab ANY result item
+                const results = document.querySelectorAll('div[data-component-type="s-search-result"]');
                 for(let card of results) {
                     const titleEl = card.querySelector('h2 a span');
                     const priceEl = card.querySelector('.a-price-whole');
@@ -127,7 +97,6 @@ class PriceHunter:
                 return {"site": "Amazon", "title": data['title'], "price": price_clean, "link": full_link}
             return None
         except Exception as e:
-            print(f"❌ Amazon Error: {e}")
             return None
 
     # --- THE MANAGER ---
@@ -136,33 +105,31 @@ class PriceHunter:
         results = []
         
         async with async_playwright() as p:
-            # Hardened launch for container hosts
             browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"]) 
             context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 800}
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-            context.set_default_timeout(25000)
             
-            page1 = await context.new_page()
-            page2 = await context.new_page()
-            page3 = await context.new_page()
+            # Create pages
+            pages = [await context.new_page() for _ in range(3)]
             
-            # Activate Stealth on all pages
-            await stealth_fn(page1)
-            await stealth_fn(page2)
-            await stealth_fn(page3)
+            # Stealth
+            for page in pages: await stealth_fn(page)
             
-            task1 = self.search_flipkart(page1, clean_query)
-            task2 = self.search_croma(page2, clean_query)
-            task3 = self.search_amazon(page3, clean_query)
+            # Run Safe
+            tasks = [
+                self.search_flipkart(pages[0], clean_query),
+                self.search_croma(pages[1], clean_query),
+                self.search_amazon(pages[2], clean_query)
+            ]
             
-            fetched_results = await asyncio.gather(task1, task2, task3)
+            # return_exceptions=True prevents one crash from stopping others
+            fetched_results = await asyncio.gather(*tasks, return_exceptions=True)
             
             await browser.close()
             
-            if fetched_results[0]: results.append(fetched_results[0])
-            if fetched_results[1]: results.append(fetched_results[1])
-            if fetched_results[2]: results.append(fetched_results[2])
+            for res in fetched_results:
+                if isinstance(res, dict): # Check if it's valid data, not an Error
+                    results.append(res)
             
         return results
