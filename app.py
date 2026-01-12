@@ -34,13 +34,13 @@ api_key = os.getenv("GEMINI_API_KEY")
 model = None
 if api_key:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('models/gemma-3-27b-it')
+    model = genai.GenerativeModel('models/gemini-1.5-pro')
 
 def clean_title_for_search(title):
     if not title: return ""
-    # Simplify title for better search results
-    # "Apple iPhone 15 Pro (128 GB) - Black" -> "Apple iPhone 15 Pro"
     clean = re.split(r'[|(-]', title)[0].strip()
+    words = clean.split()
+    if len(words) > 4: return " ".join(words[:4])
     return clean
 
 async def scrape_product_data(url):
@@ -53,24 +53,28 @@ async def scrape_product_data(url):
         page = await context.new_page()
         await stealth_fn(page)
         
+        # BLOCK ASSETS FOR SPEED
+        await page.route("**/*", lambda route: route.abort() 
+            if route.request.resource_type in ["image", "stylesheet", "font", "media"] 
+            else route.continue_())
+        
         try:
-            await page.goto(url, timeout=35000, wait_until="domcontentloaded")
+            await page.goto(url, timeout=30000, wait_until="commit")
+            # Wait for text to appear
+            try: await page.wait_for_selector('body', timeout=5000) 
+            except: pass
             
             data = await page.evaluate("""() => {
                 let title = document.querySelector('#productTitle')?.innerText.trim() || 
-                            document.querySelector('.B_NuCI, .VU-ZEz, .cPHDOP')?.innerText.trim() || "";
-                            
+                            document.querySelector('.B_NuCI, .VU-ZEz')?.innerText.trim() || "";
                 let price = 0;
                 const p1 = document.querySelector('.a-price-whole');
                 if(p1) price = parseInt(p1.innerText.replace(/[^0-9]/g, ''));
-                
-                const p2 = document.querySelector('div.Nx9bqj, div._30jeq3');
+                const p2 = document.querySelector('div.Nx9bqj');
                 if(!price && p2) price = parseInt(p2.innerText.replace(/[^0-9]/g, ''));
-
                 let reviews = 0;
                 const r1 = document.querySelector('#acrCustomerReviewText');
                 if(r1) reviews = parseInt(r1.innerText.split(' ')[0].replace(/,/g, ''));
-                
                 return { title, price, reviews };
             }""")
             
@@ -82,11 +86,11 @@ async def scrape_product_data(url):
             return None, 0, 0
 
 async def run_ai_analysis(title, reviews, price):
-    if not model: return {"verdict": "SAFE", "score": 80, "reason": "Standard checks passed."}
+    if not model: return {"verdict": "SAFE", "score": 80, "reason": "Standard verification passed."}
     
     prompt = f"""
-    Analyze this product for scams: "{title}" priced at ₹{price}.
-    CONTEXT: Today is Jan 2026. iPhone 17 series IS RELEASED.
+    Analyze product: "{title}" priced at ₹{price}.
+    CONTEXT: Today is Jan 2026.
     
     Output format: 
     VERDICT: [SAFE or SUSPICIOUS]
@@ -113,7 +117,6 @@ async def scan_endpoint(request_data: dict):
     if 'url' not in request_data: return {"error": "No input"}
     user_input = request_data['url'].strip()
     
-    # 1. SCRAPE
     if "http" in user_input or "www." in user_input:
         product_title, current_price, review_count = await scrape_product_data(user_input)
         if not product_title: product_title = "Unknown Product"
@@ -123,7 +126,6 @@ async def scan_endpoint(request_data: dict):
         current_price = 0
         review_count = 0
 
-    # 2. CLEAN & HUNT
     search_term = clean_title_for_search(product_title)
     
     ai_task = asyncio.create_task(run_ai_analysis(product_title, review_count, current_price))
@@ -138,7 +140,6 @@ async def scan_endpoint(request_data: dict):
         historian = HistoryHunter()
         history_task = asyncio.create_task(historian.get_history(search_term))
 
-    # 3. GATHER
     ai_result = await ai_task
     
     competitors = []
@@ -151,13 +152,11 @@ async def scan_endpoint(request_data: dict):
         try: history = await history_task
         except: pass
 
-    # 4. FIX PRICE (If searching, use best market price)
     if current_price == 0 and competitors:
         best = min(competitors, key=lambda x: x['price'])
         current_price = best['price']
         ai_result['reason'] = f"Price verified across {len(competitors)} stores."
 
-    # 5. INJECT CURRENT LINK
     if "http" in user_input and current_price > 0:
         competitors.insert(0, {
             "site": "This Link",

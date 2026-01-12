@@ -13,29 +13,30 @@ class HistoryHunter:
         
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-dev-shm-usage'])
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-            page = await context.new_page()
+            page = await browser.new_page()
             await stealth_fn(page)
             
+            # BLOCK ASSETS
+            await page.route("**/*", lambda route: route.abort() 
+                if route.request.resource_type in ["image", "media", "font"] 
+                else route.continue_())
+            
             try:
-                # 1. SEARCH
-                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=25000, wait_until="domcontentloaded")
+                await page.goto(f"https://pricehistoryapp.com/search?q={clean_query}", timeout=25000, wait_until="commit")
+                try: await page.wait_for_selector('a[href*="/product/"]', timeout=5000) 
+                except: pass
                 
-                # 2. FIND PRODUCT LINK (More robust selector)
-                try:
-                    await page.wait_for_selector('a[href*="/product/"]', timeout=8000)
-                    await page.click('a[href*="/product/"]', timeout=5000)
-                except:
+                # Try finding link
+                try: await page.click('a[href*="/product/"]', timeout=3000)
+                except: 
                     print("❌ History: No product results found.")
                     await browser.close(); return None
 
-                # 3. READ PAGE TEXT
-                await page.wait_for_load_state('domcontentloaded')
-                page_text = await page.evaluate("document.body.innerText")
+                # Read stats
+                try: await page.wait_for_selector('body', timeout=5000)
+                except: pass
                 
-                # Regex to find "Lowest Price is ₹XX,XXX"
+                page_text = await page.evaluate("document.body.innerText")
                 lowest_match = re.search(r'lowest price.*?₹?([\d,]+)', page_text, re.IGNORECASE)
                 average_match = re.search(r'average.*?price.*?₹?([\d,]+)', page_text, re.IGNORECASE)
                 
@@ -43,9 +44,7 @@ class HistoryHunter:
                 average = int(average_match.group(1).replace(",", "")) if average_match else 0
                 
                 await browser.close()
-                
-                if lowest > 0:
-                    return {"lowest": lowest, "average": average}
+                if lowest > 0: return {"lowest": lowest, "average": average}
                 return None
 
             except Exception as e:
