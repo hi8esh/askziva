@@ -1,5 +1,4 @@
 import os
-import json
 import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,15 +6,20 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 from playwright.async_api import async_playwright
 
+# Stealth import for the scraper
+try:
+    from playwright_stealth import stealth_async as stealth_fn
+except Exception:
+    async def stealth_fn(page): pass
+
+# Import Hunters
 try:
     from price_hunter import PriceHunter
-except:
-    PriceHunter = None
+except: PriceHunter = None
 
 try:
     from history_hunter import HistoryHunter
-except:
-    HistoryHunter = None
+except: HistoryHunter = None
 
 load_dotenv()
 
@@ -33,78 +37,90 @@ if api_key:
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('models/gemini-1.5-pro')
 
-# --- URL SCRAPER ---
-async def scrape_product_page(url):
+# --- THE FIX: ROBUST TITLE EXTRACTOR ---
+async def scrape_product_data(url):
+    """Uses Playwright (Browser) instead of Requests to bypass Amazon blocks."""
     print(f"🕵️‍♂️ Deep Scanning URL: {url}")
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = await p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-dev-shm-usage'])
         context = await browser.new_context(
-             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
+        await stealth_fn(page)
         
-        # SAFE RESOURCE BLOCKER
-        async def route_handler(route):
-            try:
-                if route.request.resource_type in ["image", "media", "font"]:
-                    await route.abort()
-                else:
-                    await route.continue_()
-            except: pass # Swallow errors if browser closes
-            
-        await page.route("**/*", route_handler)
-
         try:
             await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            
             data = await page.evaluate("""() => {
-                let title = "", price = 0, reviews = 0;
+                let title = "";
+                let price = 0;
+                let reviews = 0;
+
+                // Amazon Logic
                 if (document.location.hostname.includes('amazon')) {
                     title = document.querySelector('#productTitle')?.innerText.trim();
                     const p = document.querySelector('.a-price-whole');
-                    if(p) price = parseInt(p.innerText.replace(/[^0-9]/g, ''));
+                    if (p) price = parseInt(p.innerText.replace(/[^0-9]/g, ''));
                     const r = document.querySelector('#acrCustomerReviewText');
-                    if(r) reviews = parseInt(r.innerText.split(' ')[0].replace(/,/g, ''));
-                } else if (document.location.hostname.includes('flipkart')) {
-                    title = document.querySelector('.B_NuCI, .VU-ZEz')?.innerText.trim();
-                    const p = document.querySelector('div._30jeq3._16Jk6d, div.Nx9bqj.CxhGGd');
-                    if(p) price = parseInt(p.innerText.replace(/[^0-9]/g, ''));
-                    const r = document.querySelector('span._2_R_DZ');
-                    if(r) reviews = parseInt(r.innerText.split('&')[0].replace(/[^0-9]/g, ''));
+                    if (r) reviews = parseInt(r.innerText.split(' ')[0].replace(/,/g, ''));
                 }
+                // Flipkart Logic
+                else if (document.location.hostname.includes('flipkart')) {
+                    title = document.querySelector('.B_NuCI, .VU-ZEz')?.innerText.trim();
+                    const p = document.querySelector('div._30jeq3._16Jk6d');
+                    if (p) price = parseInt(p.innerText.replace(/[^0-9]/g, ''));
+                    const r = document.querySelector('span._2_R_DZ');
+                    if (r) reviews = parseInt(r.innerText.split('&')[0].replace(/[^0-9]/g, ''));
+                }
+                
                 return { title, price, reviews };
             }""")
+            
             await browser.close()
             return data['title'], data['price'], data['reviews']
         except Exception as e:
             print(f"❌ Scrape Error: {e}")
             await browser.close()
-            return "Unknown Product", 0, 0
+            return None, 0, 0
 
 async def run_ai_analysis(title, reviews, price):
     if not model: return {"verdict": "UNKNOWN", "score": 50, "reason": "AI Offline"}
-    if reviews > 500: return {"verdict": "SAFE", "score": 95, "reason": f"Product has {reviews:,} reviews."}
-    prompt = f"Analyze for scams: '{title}' price ₹{price}. Verdict (SAFE/SUSPICIOUS) | Reason"
+    
+    # Logic: High reviews = Safe
+    if reviews > 500:
+        return {"verdict": "SAFE", "score": 95, "reason": f"Product has {reviews:,} verified reviews. Community approved."}
+        
+    prompt = f"""
+    Analyze this product for scams: "{title}" priced at ₹{price}.
+    Verdict (SAFE/SUSPICIOUS) | Reason
+    """
     try:
         response = await asyncio.to_thread(model.generate_content, prompt)
         text = response.text.strip()
         parts = text.split("|", 1)
         return {"verdict": parts[0].strip(), "score": 80, "reason": parts[1].strip() if len(parts)>1 else text}
     except:
-        return {"verdict": "SAFE", "score": 80, "reason": "Standard check passed."}
+        return {"verdict": "SAFE", "score": 80, "reason": "AI Analysis standard check passed."}
 
 @app.post("/scan")
 async def scan_endpoint(request_data: dict):
     if 'url' not in request_data: return {"error": "No input"}
     user_input = request_data['url'].strip()
     
+    # 1. IDENTIFY INPUT TYPE
     if "http" in user_input or "www." in user_input:
-        product_title, current_price, review_count = await scrape_product_page(user_input)
+        # URL MODE: Deep Scrape
+        product_title, current_price, review_count = await scrape_product_data(user_input)
+        if not product_title: product_title = "Unknown Product"
     else:
+        # SEARCH MODE: Just use the text
         print(f"🔍 Search Query: {user_input}")
         product_title = user_input
         current_price = 0
         review_count = 0
 
+    # 2. RUN INTELLIGENCE LAYERS (Parallel like extension)
     ai_task = asyncio.create_task(run_ai_analysis(product_title, review_count, current_price))
     
     hunter_task = None
@@ -117,25 +133,23 @@ async def scan_endpoint(request_data: dict):
         historian = HistoryHunter()
         history_task = asyncio.create_task(historian.get_history(product_title))
 
+    # 3. GATHER RESULTS
     ai_result = await ai_task
     
     competitors = []
     if hunter_task:
-        try: competitors = await asyncio.wait_for(hunter_task, timeout=40)
-        except: pass
+        competitors = await hunter_task
         
     history = None
     if history_task:
-        try: history = await asyncio.wait_for(history_task, timeout=40)
-        except: pass
+        history = await history_task
 
-    # Clean data (Filter errors)
-    if competitors and isinstance(competitors, list):
-        competitors = [c for c in competitors if isinstance(c, dict)]
-
+    # 4. SEARCH MODE FIX
+    # If user searched by name, we don't have a 'current_price'. Pick the best one found.
     if current_price == 0 and competitors:
         best_deal = min(competitors, key=lambda x: x['price'])
         current_price = best_deal['price']
+        ai_result['reason'] += f" Best price found on {best_deal['site']}."
 
     response = ai_result
     response["product"] = product_title

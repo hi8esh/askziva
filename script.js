@@ -4,115 +4,94 @@ async function scanLink() {
     var button = document.querySelector("button");
 
     if (link === "") {
-        alert("Please paste a link first!");
+        alert("Please paste a link or product name first!");
         return;
     }
 
     // UI: Show Loading State
     resultBox.style.display = "block";
     resultBox.className = ""; 
-    resultBox.innerHTML = "📡 <strong>CONNECTING:</strong> Sending link to Ziva Cloud Engine...<br><em>(This might take 10 seconds while we wake up the server)</em>";
+    resultBox.innerHTML = "📡 <strong>SCANNING:</strong> Ziva is analyzing market data...<br><em>(Checking Amazon, Flipkart, Croma & History)</em>";
     button.disabled = true;
     button.innerText = "Scanning...";
 
     try {
-        // THE API CALL (Talking to Render)
         const response = await fetch('https://ziva-brain.onrender.com/scan', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url: link })
         });
 
         const data = await response.json();
 
-        // Handle the Result
         button.disabled = false;
-        button.innerText = "Check Trust";
+        button.innerText = "Ask Ziva";
 
-        // Determine color based on verdict
-        let color = "#3fb950"; // Green for SAFE
-        if (data.verdict && data.verdict.includes("SUSPICIOUS")) color = "#d29922"; // Orange
-        if (data.verdict && data.verdict.includes("HIGH RISK")) color = "#f85149"; // Red
-        const icon = (data.verdict && data.verdict.includes("SAFE")) ? "✅" : "⚠️";
+        // UI Colors
+        let color = "#3fb950"; // Green
+        if (data.verdict.includes("SUSPICIOUS")) color = "#d29922"; // Yellow
+        if (data.verdict.includes("HIGH RISK")) color = "#f85149"; // Red
+        const icon = (data.verdict.includes("SAFE")) ? "✅" : "⚠️";
 
-        // --- BUILD RESPONSE WITH HISTORY AND MARKET DATA ---
-        // Get current price from backend
-        let currentPrice = data.current_price || 0;
-
-        // NEW: If Current Price is still 0 (Search Mode), grab the cheapest competitor
-        if (currentPrice === 0 && data.competitors && data.competitors.length > 0) {
-             // Find lowest price in competitors array
-             const cheapest = data.competitors.reduce((prev, curr) => prev.price < curr.price ? prev : curr);
-             currentPrice = cheapest.price;
-        }
-    
+        // History Section
         let historyHtml = "";
         if (data.history && data.history.lowest) {
-            let lowest = data.history.lowest;
-            let label = "Lowest Ever:";
-            let priceColor = "#3fb950";
-
-            // REAL-TIME CHECK: Is current price lower than history?
-            if (currentPrice > 0 && currentPrice < lowest) {
-                lowest = currentPrice; // Overwrite history with current reality
-                label = "🔥 NEW RECORD LOW:";
-                priceColor = "#ffeb3b"; // Bright Yellow/Gold for Record
-            }
-
             historyHtml = `
-            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
-                <div style="font-size: 11px; color: #666; margin-bottom: 4px;"><strong>📉 PRICE HISTORY</strong></div>
-                <div style="display: flex; justify-content: space-between; font-size: 12px; color: #333;">
-                    <span>${label}</span>
-                    <span style="color: ${priceColor}; font-weight: bold;">₹${lowest.toLocaleString()}</span>
+            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ccc;">
+                <div style="font-size: 11px; color: #666; margin-bottom: 5px;">📉 PRICE HISTORY</div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Lowest Ever:</span>
+                    <span style="font-weight: bold; color: #3fb950;">₹${data.history.lowest.toLocaleString()}</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 12px; color: #333;">
+                <div style="display: flex; justify-content: space-between;">
                     <span>Average:</span>
                     <span>₹${data.history.average.toLocaleString()}</span>
                 </div>
             </div>`;
         }
 
+        // Market Section
         let marketHtml = "";
         if (data.competitors && data.competitors.length > 0) {
-            marketHtml = `<div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #ccc;">
-                <div style="font-size: 11px; color: #666; margin-bottom: 4px;"><strong>💰 MARKET SCANNER</strong></div>`;
+            marketHtml = `<div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ccc;">
+                <div style="font-size: 11px; color: #666; margin-bottom: 5px;">💰 COMPETITORS</div>`;
+            
             data.competitors.forEach(comp => {
-                // Check if competitor is cheaper than current price
-                let dealStyle = "color: #28a745;";  // Readable green
-                if (currentPrice > 0 && comp.price < currentPrice) {
-                    dealStyle = "color: #ffc107; font-weight: bold; text-decoration: underline;"; // Gold for better deals
+                let priceStyle = "font-weight: bold;";
+                // Highlight if cheaper than current found price
+                if (data.current_price > 0 && comp.price < data.current_price) {
+                    priceStyle += " color: #d29922; text-decoration: underline;";
                 }
 
                 marketHtml += `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 12px;">
-                    <span style="color: #333;">${comp.site}</span>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <span>${comp.site}</span>
                     <div>
-                        <span style="${dealStyle}">₹${comp.price.toLocaleString()}</span>
-                        <a href="${comp.link}" target="_blank" style="margin-left: 5px; text-decoration: none; color: #0066cc;">↗</a>
+                        <span style="${priceStyle}">₹${comp.price.toLocaleString()}</span>
+                        <a href="${comp.link}" target="_blank" style="margin-left: 5px;">↗</a>
                     </div>
                 </div>`;
             });
             marketHtml += `</div>`;
         }
 
-        resultBox.className = (data.verdict && data.verdict.includes("SAFE")) ? "safe" : "scam";
+        // Final HTML
+        resultBox.className = (data.verdict.includes("SAFE")) ? "safe" : "scam";
         resultBox.innerHTML = `
-            <div style="border-left: 3px solid ${color}; padding-left: 10px;">
-                <h3 style="margin: 0; color: ${color}; font-size: 14px;">${icon} ${data.verdict}</h3>
-                <p style="margin-top: 5px; font-size: 12px; color: #555; line-height: 1.4;">${data.reason}</p>
+            <div style="border-left: 4px solid ${color}; padding-left: 10px;">
+                <h3 style="margin: 0; color: ${color};">${icon} ${data.verdict}</h3>
+                <p style="margin: 5px 0 0 0; font-size: 0.9em;">${data.product}</p>
+                <p style="margin: 5px 0 0 0; font-size: 0.8em; opacity: 0.8;">${data.reason}</p>
             </div>
-            ${historyHtml} 
+            ${historyHtml}
             ${marketHtml}
         `;
 
     } catch (error) {
         console.error("Error:", error);
         resultBox.className = "scam";
-        resultBox.innerHTML = "<strong>❌ SYSTEM ERROR</strong><br>Could not reach the Ziva Cloud Server.<br>It might be sleeping (Free Tier). Try again in 30 seconds.";
+        resultBox.innerHTML = "<strong>❌ SERVER ERROR</strong><br>The Ziva Brain is offline or timed out.<br>Try again in 30 seconds.";
         button.disabled = false;
-        button.innerText = "Check Trust";
+        button.innerText = "Ask Ziva";
     }
 }
