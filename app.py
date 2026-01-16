@@ -63,6 +63,23 @@ def clean_title_for_search(title):
     if len(words) > 5: return " ".join(words[:5])
     return clean
 
+def extract_key_fields_from_url(url):
+    try:
+        # Extract meaningful part from Amazon/Flipkart URLs
+        # Amazon: .../Apple-MacBook-15-inch-10-core-Unified/dp/...
+        # Matches content between slash and /dp/ or similar patterns
+        match = re.search(r'amazon\.[a-z\.]+/([^/]+)/dp/', url)
+        if match:
+            raw_title = match.group(1).replace('-', ' ')
+            return raw_title
+            
+        # Generic fallback: split by slash and find longest segment
+        parts = url.split('/')
+        longest = max(parts, key=len)
+        return longest.replace('-', ' ').replace('_', ' ')
+    except:
+        return ""
+
 # --- CORE LOGIC: AI ANALYSIS (From ziva-backend) ---
 async def run_ai_analysis(title: str, price=0, reviews=0):
     # Added price/reviews args to support the website's usage,
@@ -273,6 +290,15 @@ async def scan_endpoint(request_data: dict):
     ai_task = asyncio.create_task(run_ai_analysis(product_title, current_price, review_count))
     
     search_term = clean_title_for_search(product_title)
+    
+    # FALLBACK: If title is bad (e.g. "Amazon.in") or empty, extract from URL
+    if not search_term or "Amazon" in product_title or len(search_term) < 3:
+        print("⚠️ Scraper blocked. Extracting title from URL...")
+        fallback_title = extract_key_fields_from_url(user_input)
+        if fallback_title:
+            product_title = fallback_title
+            search_term = clean_title_for_search(product_title)
+            
     print(f"cleaned search term: {search_term}")
     
     hunter_task = None
