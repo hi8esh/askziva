@@ -42,7 +42,7 @@ model = None
 if api_key:
     genai.configure(api_key=api_key)
     # Using the model from ziva-backend as it seems to be the preferred one for the logic
-    model = genai.GenerativeModel('models/gemini-3-flash-preview')
+    model = genai.GenerativeModel('models/gemma-3-27b-it')
     print("🧠 AI CORTEX: Connected (Gemini 3 flash)")
 else:
     print("⚠️ AI CORTEX: OFFLINE (Missing GEMINI_API_KEY)")
@@ -132,17 +132,50 @@ async def scrape_product_data(url):
             except: pass
             
             data = await page.evaluate("""() => {
-                let title = document.querySelector('meta[property="og:title"]')?.content || 
-                            document.querySelector('meta[name="title"]')?.content || 
+                // 1. Title Extraction
+                let title = document.querySelector('#productTitle')?.innerText.trim() || 
+                            document.querySelector('h1')?.innerText.trim() || 
+                            document.querySelector('meta[property="og:title"]')?.content ||
                             document.title;
-                            
+
+                // 2. Price Extraction
                 let price = 0;
-                const p1 = document.querySelector('.a-price-whole');
-                if(p1) price = parseInt(p1.innerText.replace(/[^0-9]/g, ''));
+                // Trusted Amazon Selectors
+                const priceSelectors = [
+                    '.a-price-whole', 
+                    '#corePriceDisplay_desktop_feature_div .a-price-whole',
+                    '#apex_desktop .a-price-whole',
+                    '.a-price .a-offscreen'
+                ];
                 
+                for (let sel of priceSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        let txt = el.innerText;
+                        // specific cleanup for hidden elements often containing '₹1,234.00'
+                        txt = txt.replace(/[^0-9.]/g, ''); 
+                        let val = parseFloat(txt);
+                        if (!isNaN(val) && val > 0) {
+                            price = Math.floor(val); 
+                            break;
+                        }
+                    }
+                }
+
+                // 3. Review Count Extraction
                 let reviews = 0;
-                const r1 = document.querySelector('#acrCustomerReviewText');
-                if(r1) reviews = parseInt(r1.innerText.split(' ')[0].replace(/,/g, ''));
+                const reviewSelectors = ['#acrCustomerReviewText', '#averageCustomerReviews .a-size-base'];
+                for (let sel of reviewSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        let txt = el.innerText.split(' ')[0].replace(/,/g, '');
+                        let val = parseInt(txt);
+                        if (!isNaN(val)) {
+                            reviews = val;
+                            break;
+                        }
+                    }
+                }
                 
                 return { title, price, reviews };
             }""")
