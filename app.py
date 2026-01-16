@@ -51,9 +51,16 @@ else:
 # --- UTILS ---
 def clean_title_for_search(title):
     if not title: return ""
-    clean = re.split(r'[|(-]', title)[0].strip()
+    # 1. Remove standard junk
+    clean = title.split("|")[0].split("(")[0].split("-")[0].strip()
+    
+    # 2. specific fix for "Amazon.in : Electronics" or similar
+    if "Amazon.in" in clean:
+        clean = clean.replace("Amazon.in", "").replace(":", "").strip()
+        
+    # 3. Limit words
     words = clean.split()
-    if len(words) > 4: return " ".join(words[:4])
+    if len(words) > 5: return " ".join(words[:5])
     return clean
 
 # --- CORE LOGIC: AI ANALYSIS (From ziva-backend) ---
@@ -266,16 +273,17 @@ async def scan_endpoint(request_data: dict):
     ai_task = asyncio.create_task(run_ai_analysis(product_title, current_price, review_count))
     
     search_term = clean_title_for_search(product_title)
+    print(f"cleaned search term: {search_term}")
     
     hunter_task = None
     if PriceHunter:
         hunter = PriceHunter()
-        hunter_task = asyncio.create_task(hunter.hunt(product_title))
+        hunter_task = asyncio.create_task(hunter.hunt(search_term))
 
     history_task = None
     if HistoryHunter:
         historian = HistoryHunter()
-        history_task = asyncio.create_task(historian.get_history(product_title))
+        history_task = asyncio.create_task(historian.get_history(search_term))
 
     ai_result = await ai_task
     
